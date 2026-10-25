@@ -31,7 +31,7 @@
 - [x] **Phase 5 — Matching Engine and REST API**
   - Time-coherent offset histogram candidate ranking.
   - REST endpoints for upload, indexing, search, stats, health (50 tests passing).
-- [ ] **Phase 6 — React Dashboard and Library**
+- [x] **Phase 6 — React Dashboard and Library**
   - Technical dark-mode UI, music library management, waveform visualization.
   - Interactive file search with match diagnostics and offset histograms.
 - [ ] **Phase 7 — Live Microphone and WebSocket Streaming**
@@ -51,5 +51,6 @@
 | Phase 2 | `8d20a72` | `feat(dsp): implement FFT and spectral analysis` | Complete |
 | Phase 3 | `3a9abed` | `feat(fingerprint): generate constellation hashes` | Complete |
 | Phase 4 | `bd189fd` | `feat(index): persist fingerprints in PostgreSQL` | Complete |
-| Phase 5 | Pending | `feat(matching): implement offset histogram search` | Complete |
-| Phase 6 | Pending | `feat(ui): add audio search dashboard` | Next |
+| Phase 5 | `e450aa4` | `feat(matching): implement offset histogram search` | Complete |
+| Phase 6 | Pending | `feat(ui): add audio search dashboard` | Complete |
+| Phase 7 | Pending | `feat(audio): support live microphone recognition` | Next |
