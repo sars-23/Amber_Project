@@ -22,9 +22,9 @@
 - [x] **Phase 2 — FFT and Spectral Analysis**
   - Custom Radix-2 Cooley-Tukey FFT in pure Java.
   - Hann windowing, STFT framing, 440 Hz peak validation tests (23 tests passing).
-- [ ] **Phase 3 — Constellation Fingerprints**
+- [x] **Phase 3 — Constellation Fingerprints**
   - Spectral peak extraction across logarithmic frequency bands.
-  - Peak pairing and 32-bit integer hash encoding/decoding.
+  - Peak pairing and 32-bit integer hash encoding/decoding (36 tests passing).
 - [ ] **Phase 4 — PostgreSQL and Indexing**
   - Flyway migrations, database schema (`songs`, `fingerprints`).
   - Spring JDBC batched inserts, index query plans, integration tests.
@@ -48,5 +48,6 @@
 |---|---|---|---|
 | Phase 0 | `d64b5ce` | `chore: initialize EchoTrace project` | Complete |
 | Phase 1 | `0e6f7b5` | `feat(audio): implement PCM normalization` | Complete |
-| Phase 2 | `9bd30cd` | `feat(dsp): implement FFT and spectral analysis` | Complete |
-| Phase 3 | Pending | `feat(fingerprint): generate constellation hashes` | Next |
+| Phase 2 | `8d20a72` | `feat(dsp): implement FFT and spectral analysis` | Complete |
+| Phase 3 | `5cd4712` | `feat(fingerprint): generate constellation hashes` | Complete |
+| Phase 4 | Pending | `feat(index): persist fingerprints in PostgreSQL` | Next |
