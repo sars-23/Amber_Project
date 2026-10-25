@@ -38,7 +38,7 @@
   - AudioWorklet PCM capture, WebSocket binary streaming, rolling query window (52 tests passing).
 - [x] **Phase 8 — Noise Lab and Measured Robustness**
   - Controlled noise mixing, synthetic/licensed fixtures, repeatable benchmarks (53 tests passing).
-- [ ] **Phase 9 — Deployment, CI, and Final Quality Gate**
+- [x] **Phase 9 — Deployment, CI, and Final Quality Gate**
   - Multi-stage Docker builds, GitHub Actions CI workflow, complete documentation.
 
 ---
@@ -54,5 +54,5 @@
 | Phase 5 | `e450aa4` | `feat(matching): implement offset histogram search` | Complete |
 | Phase 6 | `9f683df` | `feat(ui): add audio search dashboard` | Complete |
 | Phase 7 | `64a8f90` | `feat(audio): support live microphone recognition` | Complete |
-| Phase 8 | Pending | `feat(demo): build interactive Noise Lab` | Complete |
-| Phase 9 | Pending | `ci: add GitHub Actions and deployment configuration` | Next |
+| Phase 8 | `4699ea8` | `feat(demo): build interactive Noise Lab` | Complete |
+| Phase 9 | Pending | `ci: add GitHub Actions and deployment configuration` | Complete |
