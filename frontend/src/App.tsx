@@ -5,6 +5,7 @@ import { StatsOverview } from './components/StatsOverview';
 import { FileSearch } from './components/FileSearch';
 import { SongLibrary } from './components/SongLibrary';
 import { LiveMicrophoneRecognition } from './components/LiveMicrophoneRecognition';
+import { NoiseLab } from './components/NoiseLab';
 import type { Song, StatsResponse, HealthResponse } from './types/api';
 
 export const App: React.FC = () => {
@@ -154,16 +155,7 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'noiselab' && (
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-8 text-center shadow-xl backdrop-blur-md">
-            <FlaskConical className="w-12 h-12 text-amber-400 mx-auto mb-3" />
-            <h3 className="text-lg font-bold text-white">Interactive Robustness Noise Lab</h3>
-            <p className="text-xs text-slate-400 max-w-md mx-auto mt-1 mb-4">
-              Zero-microphone test bench mixing controlled Gaussian noise at adjustable SNR ratios to evaluate time-coherent offset resilience.
-            </p>
-            <div className="inline-block text-xs font-mono bg-slate-950 px-4 py-2 rounded-lg border border-slate-800 text-slate-400">
-              Scheduled for Phase 8 implementation
-            </div>
-          </div>
+          <NoiseLab songs={songs} />
         )}
       </main>
 

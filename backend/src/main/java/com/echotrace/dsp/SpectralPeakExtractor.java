@@ -29,7 +29,7 @@ public class SpectralPeakExtractor {
     private final int maxPeaksPerFrame;
 
     public SpectralPeakExtractor() {
-        this(DEFAULT_BANDS, 2.0, 2, 2, 6);
+        this(DEFAULT_BANDS, 1.0, 2, 2, 8);
     }
 
     public SpectralPeakExtractor(int[][] frequencyBands, double minPeakMagnitude, int timeNeighborhood, int freqNeighborhood, int maxPeaksPerFrame) {
