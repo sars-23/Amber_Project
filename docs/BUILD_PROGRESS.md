@@ -16,9 +16,9 @@
   - Git initialized, `.gitignore`, `.env.example`, `compose.yaml`, architecture docs established.
   - Toolchain verified: Java 21, Maven 3.9.9, Node v24, npm 11, FFmpeg verified.
   - Remote status: `gh auth status` indicates unauthenticated host; local Git commits tracking progress.
-- [ ] **Phase 1 — Audio Ingestion and Normalization**
+- [x] **Phase 1 — Audio Ingestion and Normalization**
   - PCM representation (16-bit mono @ 11,025 Hz).
-  - FFmpeg integration and validation tests.
+  - FFmpeg integration and validation tests (10 tests passing).
 - [ ] **Phase 2 — FFT and Spectral Analysis**
   - Custom Radix-2 Cooley-Tukey FFT in pure Java.
   - Hann windowing, STFT framing, 440 Hz peak validation tests.
@@ -46,5 +46,6 @@
 ## Commit Log
 | Phase | Commit | Message | Status |
 |---|---|---|---|
-| Phase 0 | `ccc7a17` | `chore: initialize EchoTrace project` | Complete |
-| Phase 1 | Pending | `feat(audio): implement PCM normalization` | Next |
+| Phase 0 | `d64b5ce` | `chore: initialize EchoTrace project` | Complete |
+| Phase 1 | `b41ba82` | `feat(audio): implement PCM normalization` | Complete |
+| Phase 2 | Pending | `feat(dsp): implement FFT and spectral analysis` | Next |

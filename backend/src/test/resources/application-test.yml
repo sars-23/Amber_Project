@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:echotrace_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+echotrace:
+  audio:
+    sample-rate: 11025
+    ffmpeg-path: ${ECHOTRACE_FFMPEG_PATH:C:\Users\rezsi\AppData\Local\Programs\Stremio\ffmpeg.exe}
+    max-duration-seconds: 600
+    min-duration-seconds: 1
+    max-file-size-bytes: 26214400
+  dsp:
+    fft-size: 1024
+    hop-size: 512
