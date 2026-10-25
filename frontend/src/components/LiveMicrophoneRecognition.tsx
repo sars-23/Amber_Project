@@ -3,6 +3,7 @@ import { Mic, MicOff, Radio, Volume2, AlertCircle } from 'lucide-react';
 import { WaveformVisualizer } from './WaveformVisualizer';
 import { MatchResultCard } from './MatchResultCard';
 import type { MatchResponse } from '../types/api';
+import { getWebSocketUrl } from '../services/apiClient';
 
 export const LiveMicrophoneRecognition: React.FC = () => {
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -50,6 +51,10 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
     try {
       // 1. Request microphone access
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Microphone access requires a secure HTTPS connection or localhost.');
+      }
+
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -61,8 +66,7 @@ export const LiveMicrophoneRecognition: React.FC = () => {
       setStream(mediaStream);
 
       // 2. Establish WebSocket connection
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/api/v1/ws/audio-stream`;
+      const wsUrl = getWebSocketUrl();
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

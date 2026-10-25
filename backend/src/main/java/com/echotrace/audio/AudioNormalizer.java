@@ -98,7 +98,7 @@ public class AudioNormalizer {
             Files.write(tempInput, audioBytes);
 
             int targetRate = audioProperties.getSampleRate();
-            String ffmpegPath = audioProperties.getFfmpegPath();
+            String ffmpegPath = resolveFfmpegExecutable(audioProperties.getFfmpegPath());
 
             ProcessBuilder pb = new ProcessBuilder(
                     ffmpegPath,
@@ -189,5 +189,22 @@ public class AudioNormalizer {
             }
         }
         return ".tmp";
+    }
+
+    private String resolveFfmpegExecutable(String configuredPath) {
+        if (configuredPath != null && !configuredPath.isBlank()) {
+            File file = new File(configuredPath);
+            if (file.exists() && (file.canExecute() || file.isFile())) {
+                return configuredPath;
+            }
+            if (!configuredPath.contains(File.separator) && !configuredPath.contains("/") && !configuredPath.contains("\\")) {
+                return configuredPath;
+            }
+        }
+        String localStremio = "C:\\Users\\rezsi\\AppData\\Local\\Programs\\Stremio\\ffmpeg.exe";
+        if (new File(localStremio).exists()) {
+            return localStremio;
+        }
+        return "ffmpeg";
     }
 }

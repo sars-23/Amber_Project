@@ -1,6 +1,33 @@
 import type { Song, MatchResponse, StatsResponse, HealthResponse } from '../types/api';
 
-const API_BASE = '/api/v1';
+export function getApiBaseUrl(): string {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (!envUrl) {
+    return '/api/v1';
+  }
+  const clean = envUrl.replace(/\/+$/, '');
+  return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
+}
+
+export function getWebSocketUrl(): string {
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
+  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  if (apiBase && (apiBase.startsWith('http://') || apiBase.startsWith('https://'))) {
+    const wsBase = apiBase
+      .replace(/^http:\/\//, 'ws://')
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/\/+$/, '');
+    return wsBase.endsWith('/api/v1')
+      ? `${wsBase}/ws/audio-stream`
+      : `${wsBase}/api/v1/ws/audio-stream`;
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/api/v1/ws/audio-stream`;
+}
+
+const API_BASE = getApiBaseUrl();
 
 export async function fetchStats(): Promise<StatsResponse> {
   const res = await fetch(`${API_BASE}/stats`);
