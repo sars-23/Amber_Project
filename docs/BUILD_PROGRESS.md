@@ -34,8 +34,8 @@
 - [x] **Phase 6 — React Dashboard and Library**
   - Technical dark-mode UI, music library management, waveform visualization.
   - Interactive file search with match diagnostics and offset histograms.
-- [ ] **Phase 7 — Live Microphone and WebSocket Streaming**
-  - AudioWorklet PCM capture, WebSocket binary streaming, rolling query window.
+- [x] **Phase 7 — Live Microphone and WebSocket Streaming**
+  - AudioWorklet PCM capture, WebSocket binary streaming, rolling query window (52 tests passing).
 - [ ] **Phase 8 — Noise Lab and Measured Robustness**
   - Controlled noise mixing, synthetic/licensed fixtures, repeatable benchmarks.
 - [ ] **Phase 9 — Deployment, CI, and Final Quality Gate**
@@ -52,5 +52,6 @@
 | Phase 3 | `3a9abed` | `feat(fingerprint): generate constellation hashes` | Complete |
 | Phase 4 | `bd189fd` | `feat(index): persist fingerprints in PostgreSQL` | Complete |
 | Phase 5 | `e450aa4` | `feat(matching): implement offset histogram search` | Complete |
-| Phase 6 | Pending | `feat(ui): add audio search dashboard` | Complete |
-| Phase 7 | Pending | `feat(audio): support live microphone recognition` | Next |
+| Phase 6 | `9f683df` | `feat(ui): add audio search dashboard` | Complete |
+| Phase 7 | Pending | `feat(audio): support live microphone recognition` | Complete |
+| Phase 8 | Pending | `feat(demo): build interactive Noise Lab` | Next |
