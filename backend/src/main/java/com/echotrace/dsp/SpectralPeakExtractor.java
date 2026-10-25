@@ -29,7 +29,7 @@ public class SpectralPeakExtractor {
     private final int maxPeaksPerFrame;
 
     public SpectralPeakExtractor() {
-        this(DEFAULT_BANDS, 0.5, 2, 2, 6);
+        this(DEFAULT_BANDS, 2.0, 2, 2, 6);
     }
 
     public SpectralPeakExtractor(int[][] frequencyBands, double minPeakMagnitude, int timeNeighborhood, int freqNeighborhood, int maxPeaksPerFrame) {
@@ -109,8 +109,15 @@ public class SpectralPeakExtractor {
                 if (f == targetFrame && b == targetBin) {
                     continue;
                 }
-                if (spectrogram[f][b] > targetMag) {
-                    return false;
+                // Break plateau ties strictly: prior coordinates require strict superiority
+                if (f < targetFrame || (f == targetFrame && b < targetBin)) {
+                    if (spectrogram[f][b] >= targetMag) {
+                        return false;
+                    }
+                } else {
+                    if (spectrogram[f][b] > targetMag) {
+                        return false;
+                    }
                 }
             }
         }

@@ -28,9 +28,9 @@
 - [x] **Phase 4 — PostgreSQL and Indexing**
   - Flyway migrations, database schema (`songs`, `fingerprints`).
   - Spring JDBC batched inserts, index query plans, integration tests (41 tests passing).
-- [ ] **Phase 5 — Matching Engine and REST API**
+- [x] **Phase 5 — Matching Engine and REST API**
   - Time-coherent offset histogram candidate ranking.
-  - REST endpoints for upload, indexing, search, stats, health.
+  - REST endpoints for upload, indexing, search, stats, health (50 tests passing).
 - [ ] **Phase 6 — React Dashboard and Library**
   - Technical dark-mode UI, music library management, waveform visualization.
   - Interactive file search with match diagnostics and offset histograms.
@@ -50,5 +50,6 @@
 | Phase 1 | `0e6f7b5` | `feat(audio): implement PCM normalization` | Complete |
 | Phase 2 | `8d20a72` | `feat(dsp): implement FFT and spectral analysis` | Complete |
 | Phase 3 | `3a9abed` | `feat(fingerprint): generate constellation hashes` | Complete |
-| Phase 4 | `239ff69` | `feat(index): persist fingerprints in PostgreSQL` | Complete |
-| Phase 5 | Pending | `feat(matching): implement offset histogram search` | Next |
+| Phase 4 | `bd189fd` | `feat(index): persist fingerprints in PostgreSQL` | Complete |
+| Phase 5 | Pending | `feat(matching): implement offset histogram search` | Complete |
+| Phase 6 | Pending | `feat(ui): add audio search dashboard` | Next |

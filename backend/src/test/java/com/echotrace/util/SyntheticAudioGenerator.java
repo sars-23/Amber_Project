@@ -47,6 +47,41 @@ public final class SyntheticAudioGenerator {
     }
 
     /**
+     * Generates a melody of successive tones over time.
+     * This creates realistic non-stationary frequency content with precise temporal landmarks.
+     */
+    public static short[] generateMelody(double[] noteFrequenciesHz, double noteDurationSeconds, int sampleRate) {
+        int samplesPerNote = (int) Math.round(noteDurationSeconds * sampleRate);
+        int totalSamples = samplesPerNote * noteFrequenciesHz.length;
+        short[] samples = new short[totalSamples];
+
+        for (int noteIdx = 0; noteIdx < noteFrequenciesHz.length; noteIdx++) {
+            double rootFreq = noteFrequenciesHz[noteIdx];
+            int noteStart = noteIdx * samplesPerNote;
+            // Generate root + major third (1.25x) + fifth (1.5x) for a rich musical chord
+            double f1 = rootFreq;
+            double f2 = rootFreq * 1.25;
+            double f3 = rootFreq * 1.5;
+
+            for (int i = 0; i < samplesPerNote; i++) {
+                double time = (double) i / sampleRate;
+                double noteTime = (double) i / samplesPerNote;
+                // Mild natural decay
+                double env = 0.5 + 0.5 * Math.exp(-1.5 * noteTime);
+
+                double v1 = Math.sin(2.0 * Math.PI * f1 * time);
+                double v2 = 0.8 * Math.sin(2.0 * Math.PI * f2 * time);
+                double v3 = 0.7 * Math.sin(2.0 * Math.PI * f3 * time);
+                double vHarmonic = 0.4 * Math.sin(4.0 * Math.PI * f1 * time);
+
+                double combined = (v1 + v2 + v3 + vHarmonic) / 2.9 * env;
+                samples[noteStart + i] = (short) Math.round(combined * 32767.0 * 0.9);
+            }
+        }
+        return samples;
+    }
+
+    /**
      * Creates a valid canonical 16-bit mono RIFF/WAVE byte array.
      */
     public static byte[] createWavFile(short[] samples, int sampleRate) throws IOException {
