@@ -1,0 +1,41 @@
+# Java & Maven
+backend/target/
+**/target/
+*.class
+*.jar
+*.war
+*.ear
+.mvn/
+!.mvn/wrapper/maven-wrapper.properties
+
+# Node & Frontend
+frontend/node_modules/
+**/node_modules/
+frontend/dist/
+**/dist/
+.eslintcache
+*.tsbuildinfo
+
+# IDE & Editors
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Environment & Local Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Runtime & Local Data
+uploads/
+temp/
+*.log
+postgres-data/
+scratch/
