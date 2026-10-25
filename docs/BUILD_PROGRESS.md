@@ -19,9 +19,9 @@
 - [x] **Phase 1 — Audio Ingestion and Normalization**
   - PCM representation (16-bit mono @ 11,025 Hz).
   - FFmpeg integration and validation tests (10 tests passing).
-- [ ] **Phase 2 — FFT and Spectral Analysis**
+- [x] **Phase 2 — FFT and Spectral Analysis**
   - Custom Radix-2 Cooley-Tukey FFT in pure Java.
-  - Hann windowing, STFT framing, 440 Hz peak validation tests.
+  - Hann windowing, STFT framing, 440 Hz peak validation tests (23 tests passing).
 - [ ] **Phase 3 — Constellation Fingerprints**
   - Spectral peak extraction across logarithmic frequency bands.
   - Peak pairing and 32-bit integer hash encoding/decoding.
@@ -47,5 +47,6 @@
 | Phase | Commit | Message | Status |
 |---|---|---|---|
 | Phase 0 | `d64b5ce` | `chore: initialize EchoTrace project` | Complete |
-| Phase 1 | `b41ba82` | `feat(audio): implement PCM normalization` | Complete |
-| Phase 2 | Pending | `feat(dsp): implement FFT and spectral analysis` | Next |
+| Phase 1 | `0e6f7b5` | `feat(audio): implement PCM normalization` | Complete |
+| Phase 2 | `9bd30cd` | `feat(dsp): implement FFT and spectral analysis` | Complete |
+| Phase 3 | Pending | `feat(fingerprint): generate constellation hashes` | Next |
