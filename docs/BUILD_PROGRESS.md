@@ -25,9 +25,9 @@
 - [x] **Phase 3 — Constellation Fingerprints**
   - Spectral peak extraction across logarithmic frequency bands.
   - Peak pairing and 32-bit integer hash encoding/decoding (36 tests passing).
-- [ ] **Phase 4 — PostgreSQL and Indexing**
+- [x] **Phase 4 — PostgreSQL and Indexing**
   - Flyway migrations, database schema (`songs`, `fingerprints`).
-  - Spring JDBC batched inserts, index query plans, integration tests.
+  - Spring JDBC batched inserts, index query plans, integration tests (41 tests passing).
 - [ ] **Phase 5 — Matching Engine and REST API**
   - Time-coherent offset histogram candidate ranking.
   - REST endpoints for upload, indexing, search, stats, health.
@@ -49,5 +49,6 @@
 | Phase 0 | `d64b5ce` | `chore: initialize EchoTrace project` | Complete |
 | Phase 1 | `0e6f7b5` | `feat(audio): implement PCM normalization` | Complete |
 | Phase 2 | `8d20a72` | `feat(dsp): implement FFT and spectral analysis` | Complete |
-| Phase 3 | `5cd4712` | `feat(fingerprint): generate constellation hashes` | Complete |
-| Phase 4 | Pending | `feat(index): persist fingerprints in PostgreSQL` | Next |
+| Phase 3 | `3a9abed` | `feat(fingerprint): generate constellation hashes` | Complete |
+| Phase 4 | `239ff69` | `feat(index): persist fingerprints in PostgreSQL` | Complete |
+| Phase 5 | Pending | `feat(matching): implement offset histogram search` | Next |

@@ -27,6 +27,7 @@ public class FingerprintGenerator {
     private final ConstellationBuilder constellationBuilder;
     private final AudioProperties audioProperties;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FingerprintGenerator(AudioProperties audioProperties,
                                 SpectralPeakExtractor peakExtractor,
                                 ConstellationBuilder constellationBuilder) {
