@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for EchoTrace React Frontend with Nginx
+# Multi-stage Dockerfile for Amber React Frontend with Nginx
 
 # Stage 1: Build static assets
 FROM node:20-alpine AS builder

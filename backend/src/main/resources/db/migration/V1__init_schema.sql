@@ -1,4 +1,4 @@
--- EchoTrace Schema Migration V1
+-- Amber Schema Migration V1
 -- Creates songs and fingerprints tables with optimized B-tree indexes
 
 CREATE TABLE IF NOT EXISTS songs (

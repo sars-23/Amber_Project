@@ -1,8 +1,8 @@
-# EchoTrace Build Progress
+# Amber Build Progress
 
 ## Project Metadata
-- **Project**: EchoTrace (Acoustic Fingerprinting & Real-Time Audio Search Engine)
-- **Target Branch**: `main` (or `feat/echotrace-build`)
+- **Project**: Amber (Acoustic Fingerprinting & Real-Time Audio Search Engine)
+- **Target Branch**: `main` (or `feat/Amber-build`)
 - **Backend**: Java 21, Spring Boot 3.3.x, Spring JDBC, Flyway, Testcontainers
 - **Frontend**: React 18 / Vite, TypeScript, Tailwind CSS, Web Audio API, WebSocket
 - **Database**: PostgreSQL 16
@@ -15,7 +15,7 @@
 - [x] **Phase 0 — Workspace, Architecture, and Repository Setup**
   - Git initialized, `.gitignore`, `.env.example`, `compose.yaml`, architecture docs established.
   - Toolchain verified: Java 21, Maven 3.9.9, Node v24, npm 11, FFmpeg verified.
-  - Remote status: Verified & synchronized with GitHub private repository `sars-23/echotrace` on branch `main`.
+  - Remote status: Verified & synchronized with GitHub private repository `sars-23/Amber` on branch `main`.
 - [x] **Phase 1 — Audio Ingestion and Normalization**
   - PCM representation (16-bit mono @ 11,025 Hz).
   - FFmpeg integration and validation tests (10 tests passing).
@@ -49,7 +49,7 @@
 ## Commit Log
 | Phase | Commit | Message | Status |
 |---|---|---|---|
-| Phase 0 | `d64b5ce` | `chore: initialize EchoTrace project` | Pushed |
+| Phase 0 | `d64b5ce` | `chore: initialize Amber project` | Pushed |
 | Phase 1 | `0e6f7b5` | `feat(audio): implement PCM normalization` | Pushed |
 | Phase 2 | `8d20a72` | `feat(dsp): implement FFT and spectral analysis` | Pushed |
 | Phase 3 | `3a9abed` | `feat(fingerprint): generate constellation hashes` | Pushed |

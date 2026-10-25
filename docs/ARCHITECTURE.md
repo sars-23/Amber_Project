@@ -1,7 +1,7 @@
-# EchoTrace: Architecture Decision Document
+# Amber: Architecture Decision Document
 
 ## 1. System Overview
-EchoTrace is an acoustic fingerprinting and audio search engine built as a modular monolith. It ingests arbitrary audio files (or live microphone streams), decodes and normalizes them into PCM audio, computes spectral constellations using a custom Radix-2 Cooley-Tukey FFT, indexes compact 32-bit hashes into PostgreSQL, and performs sub-second matching using time-coherent offset histogram analysis.
+Amber is an acoustic fingerprinting and audio search engine built as a modular monolith. It ingests arbitrary audio files (or live microphone streams), decodes and normalizes them into PCM audio, computes spectral constellations using a custom Radix-2 Cooley-Tukey FFT, indexes compact 32-bit hashes into PostgreSQL, and performs sub-second matching using time-coherent offset histogram analysis.
 
 ```mermaid
 graph TD
@@ -30,27 +30,27 @@ graph TD
 ```
 
 ## 2. Component Boundaries
-1. **Audio Ingestion (`com.echotrace.audio`)**:
+1. **Audio Ingestion (`com.Amber.audio`)**:
    - `AudioNormalizer`: Converts multi-format inputs (WAV, MP3, etc.) into mono, signed 16-bit PCM at 11,025 Hz using FFmpeg.
    - `PcmAudio`: Strongly typed value object holding raw byte/sample arrays, sample rate, and duration.
    - `AudioValidationService`: Checks input size, mime types, sample counts, duration bounds.
-2. **Digital Signal Processing (`com.echotrace.dsp`)**:
+2. **Digital Signal Processing (`com.Amber.dsp`)**:
    - `Fft`: Pure Java in-place Radix-2 Cooley-Tukey decimation-in-time FFT.
    - `HannWindow`: Precomputed periodic Hann window coefficients.
    - `StftProcessor`: Window framing with 50% overlap (hop size = 512, frame size = 1024).
    - `SpectralPeakExtractor`: Adaptive thresholding across logarithmic frequency bands.
-3. **Fingerprinting (`com.echotrace.fingerprint`)**:
+3. **Fingerprinting (`com.Amber.fingerprint`)**:
    - `ConstellationBuilder`: Groups spectral peaks into anchor-target pairings within a forward target zone ($dt \in [1, 63]$).
    - `FingerprintHashCodec`: Bitwise packing into 32-bit signed/unsigned integer representation:
      - Anchor Freq Bin (9 bits: 0..511)
      - Target Freq Bin (9 bits: 0..511)
      - Delta Frames (6 bits: 1..63)
-4. **Database & Indexing (`com.echotrace.indexing`, `com.echotrace.song`)**:
+4. **Database & Indexing (`com.Amber.indexing`, `com.Amber.song`)**:
    - PostgreSQL storage with Flyway versioned migrations.
    - `songs` table: id, title, artist, duration_ms, fingerprint_count, created_at.
    - `fingerprints` table: hash (INT), song_id (BIGINT FK), anchor_time_ms (INT).
    - B-tree indexing on `(hash, song_id)` for high-throughput batch lookups.
-5. **Matching Engine (`com.echotrace.matching`)**:
+5. **Matching Engine (`com.Amber.matching`)**:
    - `OffsetHistogram`: Evaluates candidate time delta clustering ($\Delta t = t_{db} - t_{query}$).
    - Peak concentration scoring with background noise discrimination.
 6. **Frontend Experience (`frontend/src`)**:

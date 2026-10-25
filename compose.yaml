@@ -1,18 +1,18 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: echotrace-postgres
+    container_name: amber-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-echotrace}
-      POSTGRES_USER: ${POSTGRES_USER:-echotrace}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-echotrace_secret_password}
+      POSTGRES_DB: ${POSTGRES_DB:-amber}
+      POSTGRES_USER: ${POSTGRES_USER:-amber}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-amber_secret_password}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-echotrace} -d ${POSTGRES_DB:-echotrace}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amber} -d ${POSTGRES_DB:-amber}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,15 +21,15 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: echotrace-backend
+    container_name: amber-backend
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-echotrace}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-echotrace}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-echotrace_secret_password}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-amber}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-amber}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-amber_secret_password}
       SERVER_PORT: 8080
       PORT: 8080
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173,https://*.vercel.app
@@ -40,7 +40,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: echotrace-frontend
+    container_name: amber-frontend
     restart: unless-stopped
     depends_on:
       - backend

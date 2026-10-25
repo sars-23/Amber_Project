@@ -1,6 +1,6 @@
-# EchoTrace: Production Deployment Guide
+# Amber: Production Deployment Guide
 
-This guide details the step-by-step process for deploying EchoTrace to a real, public cloud infrastructure:
+This guide details the step-by-step process for deploying Amber to a real, public cloud infrastructure:
 - **Frontend**: Vercel (React 19 / TypeScript / Vite)
 - **Backend**: Render Web Service (Docker container with Java 21, Spring Boot 3, and FFmpeg)
 - **Database**: Neon Serverless PostgreSQL (or Render PostgreSQL)
@@ -13,11 +13,11 @@ This guide details the step-by-step process for deploying EchoTrace to a real, p
 ```
 [ User Browser / Mic ]
         |
-        +---> HTTPS: https://echotrace.vercel.app  (Vercel Edge CDN)
+        +---> HTTPS: https://amber.vercel.app  (Vercel Edge CDN)
         |
-        +---> HTTPS API: https://echotrace-backend.onrender.com/api/v1  (Render Docker)
+        +---> HTTPS API: https://amber-backend.onrender.com/api/v1  (Render Docker)
         |
-        +---> WSS: wss://echotrace-backend.onrender.com/api/v1/ws/audio-stream  (Render Docker)
+        +---> WSS: wss://amber-backend.onrender.com/api/v1/ws/audio-stream  (Render Docker)
                                      |
                                      v
                        [ Neon PostgreSQL / Render DB ]
@@ -31,10 +31,10 @@ This guide details the step-by-step process for deploying EchoTrace to a real, p
 ### Option A: Neon Serverless PostgreSQL (Recommended)
 Neon offers a fast, serverless PostgreSQL with generous free compute and storage that does not expire:
 1. Go to [neon.tech](https://neon.tech) and create an account.
-2. Create a new project named **echotrace**.
+2. Create a new project named **amber**.
 3. In your Neon dashboard, copy your connection details:
    - Select **Pooled connection** or **Direct connection**.
-   - Note the Host (`ep-something.aws.neon.tech`), Database (`echotrace` or `neondb`), User, and Password.
+   - Note the Host (`ep-something.aws.neon.tech`), Database (`amber` or `neondb`), User, and Password.
 4. Construct your Spring Boot JDBC connection URL:
    ```
    jdbc:postgresql://<neon-host>/<database>?sslmode=require
@@ -47,25 +47,25 @@ Neon offers a fast, serverless PostgreSQL with generous free compute and storage
 
 ### Option B: Render Managed PostgreSQL
 1. On [dashboard.render.com](https://dashboard.render.com), click **New +** -> **PostgreSQL**.
-2. Name: `echotrace-db`, Database: `echotrace`, User: `echotrace_user`.
+2. Name: `amber-db`, Database: `amber`, User: `amber_user`.
 3. Plan: **Free**.
 4. Once provisioned, copy the **Internal Database URL** (if backend is on Render) or **External Database URL**. Prepend `jdbc:` to the URL:
    ```
-   jdbc:postgresql://echotrace-db-xxx.render.com/echotrace?sslmode=require
+   jdbc:postgresql://amber-db-xxx.render.com/amber?sslmode=require
    ```
 
 ---
 
 ## 3. Backend Deployment (Render Web Service)
 
-EchoTrace requires FFmpeg for decoding MP3, OGG, and M4A audio. The repository provides a multi-stage `backend/Dockerfile` that installs Alpine Linux, FFmpeg, and Eclipse Temurin Java 21.
+Amber requires FFmpeg for decoding MP3, OGG, and M4A audio. The repository provides a multi-stage `backend/Dockerfile` that installs Alpine Linux, FFmpeg, and Eclipse Temurin Java 21.
 
 ### Step-by-Step Setup on Render:
 1. Go to [dashboard.render.com](https://dashboard.render.com).
 2. Click **New +** -> **Web Service**.
 3. Connect your GitHub repository: `sars-23/echotrace`.
 4. Configure service details:
-   - **Name**: `echotrace-backend`
+   - **Name**: `amber-backend`
    - **Region**: Choose closest to you (e.g. `Oregon (US West)` or `Frankfurt (EU)`)
    - **Branch**: `main`
    - **Root Directory**: Leave blank (or `backend` if deploying only backend directory)
@@ -87,11 +87,11 @@ EchoTrace requires FFmpeg for decoding MP3, OGG, and M4A audio. The repository p
 | `SPRING_DATASOURCE_PASSWORD` | `<database-password>` | **Yes** |
 | `CORS_ALLOWED_ORIGINS` | `https://*.vercel.app,http://localhost:3000,http://localhost:5173` | **Yes** |
 | `JAVA_OPTS` | `-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0` | **Recommended** |
-| `ECHOTRACE_FFMPEG_PATH` | `ffmpeg` | Default |
+| `AMBER_FFMPEG_PATH` | `ffmpeg` | Default |
 
 7. Click **Create Web Service**.
 8. Render will pull Maven dependencies, compile the JAR, build the Alpine image with FFmpeg, and launch the service.
-9. Note your backend URL: `https://echotrace-backend.onrender.com`.
+9. Note your backend URL: `https://amber-backend.onrender.com`.
 
 ---
 
@@ -112,13 +112,13 @@ The frontend is a Vite + React 19 application located in the `frontend/` directo
 
 | Variable Name | Value |
 |---|---|
-| `VITE_API_BASE_URL` | `https://echotrace-backend.onrender.com/api/v1` |
-| `VITE_WS_URL` | `wss://echotrace-backend.onrender.com/api/v1/ws/audio-stream` |
+| `VITE_API_BASE_URL` | `https://amber-backend.onrender.com/api/v1` |
+| `VITE_WS_URL` | `wss://amber-backend.onrender.com/api/v1/ws/audio-stream` |
 
 *(Note: If `VITE_WS_URL` is omitted, the frontend automatically derives `wss://...` from `VITE_API_BASE_URL`).*
 
 5. Click **Deploy**.
-6. When deployment finishes, Vercel gives you your production URL (e.g. `https://echotrace.vercel.app`).
+6. When deployment finishes, Vercel gives you your production URL (e.g. `https://amber.vercel.app`).
 7. Update `CORS_ALLOWED_ORIGINS` on Render if you use a custom domain (e.g., `https://mycustomdomain.com,https://*.vercel.app`).
 
 ---

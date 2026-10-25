@@ -135,7 +135,7 @@ export const LiveMicrophoneRecognition: React.FC = () => {
       };
 
       ws.onerror = () => {
-        setPermissionError('WebSocket connection error. Ensure EchoTrace backend is running.');
+        setPermissionError('WebSocket connection error. Ensure Amber backend is running.');
         stopListening();
       };
 

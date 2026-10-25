@@ -1,4 +1,4 @@
-# EchoTrace: REST & WebSocket API Specification
+# Amber: REST & WebSocket API Specification
 
 ## 1. REST Endpoints
 

@@ -1,14 +1,13 @@
-# EchoTrace: Acoustic Fingerprinting & Real-Time Audio Search Engine
+# Amber: Acoustic Fingerprinting & Real-Time Audio Search Engine
 
-[![Build Status](https://github.com/echotrace/echotrace/actions/workflows/ci.yml/badge.svg)](https://github.com/echotrace/echotrace/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java 21](https://img.shields.io/badge/Java-21-orange.svg)](https://adoptium.net/)
 [![Spring Boot 3](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen.svg)](https://spring.io/projects/spring-boot)
-[![React 18](https://img.shields.io/badge/React-18-blue.svg)](https://react.dev/)
+[![React 19](https://img.shields.io/badge/React-19-blue.svg)](https://react.dev/)
 
-EchoTrace is a production-minded acoustic fingerprinting and audio search engine built from first principles in Java 21, Spring Boot, and React/TypeScript.
+Amber is a production-minded acoustic fingerprinting and audio search engine built from first principles in Java 21, Spring Boot, and React/TypeScript.
 
-Instead of utilizing black-box third-party music recognition APIs, EchoTrace implements a pure Java **Radix-2 Cooley-Tukey Fast Fourier Transform (FFT)**, Short-Time Fourier Transform (STFT) spectral framing, logarithmic peak extraction, constellation pairing into 32-bit integer hashes, and time-coherent offset histogram matching over PostgreSQL.
+Instead of utilizing black-box third-party music recognition APIs, Amber implements a pure Java **Radix-2 Cooley-Tukey Fast Fourier Transform (FFT)**, Short-Time Fourier Transform (STFT) spectral framing, logarithmic peak extraction, constellation pairing into 32-bit integer hashes, and time-coherent offset histogram matching over PostgreSQL.
 
 ---
 
@@ -46,13 +45,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ALGORITHM.md](docs/AL
 - Maven 3.9+
 - Node.js 18+ and npm
 - Docker & Docker Compose (optional, for containerized run)
-- FFmpeg on PATH (or configure `ECHOTRACE_FFMPEG_PATH`)
+- FFmpeg on PATH (or configure `AMBER_FFMPEG_PATH`)
 
 ### Running with Docker Compose
 ```bash
 docker compose up --build
 ```
-Access the application at `http://localhost:5173`.
+Access the application at `http://localhost:3000`.
 
 ### Running Locally
 1. Start PostgreSQL:
@@ -73,8 +72,9 @@ Access the application at `http://localhost:5173`.
 
 ---
 
-## API Documentation
-See [docs/API.md](docs/API.md) for full REST and WebSocket documentation.
+## API & Deployment Documentation
+- API Documentation: [docs/API.md](docs/API.md)
+- Production Deployment (Vercel, Render, Neon): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 ---
 

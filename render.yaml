@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: echotrace-backend
+    name: amber-backend
     runtime: docker
     dockerfilePath: backend/Dockerfile
     dockerContext: backend

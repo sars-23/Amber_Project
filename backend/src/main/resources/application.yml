@@ -4,15 +4,15 @@ server:
 
 spring:
   application:
-    name: echotrace
+    name: amber
   servlet:
     multipart:
       max-file-size: 25MB
       max-request-size: 30MB
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/echotrace}
-    username: ${SPRING_DATASOURCE_USERNAME:echotrace_user}
-    password: ${SPRING_DATASOURCE_PASSWORD:echotrace_secure_password}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/amber}
+    username: ${SPRING_DATASOURCE_USERNAME:amber_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:amber_secure_password}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: ${HIKARI_MAX_POOL_SIZE:10}
@@ -25,16 +25,16 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
-echotrace:
+amber:
   audio:
-    sample-rate: ${ECHOTRACE_SAMPLE_RATE:11025}
-    ffmpeg-path: ${ECHOTRACE_FFMPEG_PATH:ffmpeg}
+    sample-rate: ${AMBER_SAMPLE_RATE:11025}
+    ffmpeg-path: ${AMBER_FFMPEG_PATH:ffmpeg}
     max-duration-seconds: 600
     min-duration-seconds: 1
     max-file-size-bytes: 26214400
   dsp:
-    fft-size: ${ECHOTRACE_FFT_SIZE:1024}
-    hop-size: ${ECHOTRACE_HOP_SIZE:512}
+    fft-size: ${AMBER_FFT_SIZE:1024}
+    hop-size: ${AMBER_HOP_SIZE:512}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,https://*.vercel.app}
 

@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for EchoTrace Java 21 Backend with FFmpeg
+# Multi-stage Dockerfile for Amber Java 21 Backend with FFmpeg
 
 # Stage 1: Build JAR with Maven
 FROM maven:3.9.9-eclipse-temurin-21-alpine AS builder
@@ -20,11 +20,11 @@ WORKDIR /app
 RUN apk add --no-cache ffmpeg curl
 
 # Create non-root user for security
-RUN addgroup -S echotrace && adduser -S echotrace -G echotrace
-USER echotrace:echotrace
+RUN addgroup -S amber && adduser -S amber -G amber
+USER amber:amber
 
 # Copy built artifact
-COPY --from=builder /app/target/echotrace-backend-1.0.0.jar app.jar
+COPY --from=builder /app/target/amber-backend-1.0.0.jar app.jar
 
 EXPOSE 8080
 

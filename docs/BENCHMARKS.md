@@ -1,4 +1,4 @@
-# EchoTrace: Benchmarks & Empirical Robustness Measurements
+# Amber: Benchmarks & Empirical Robustness Measurements
 
 ## 1. Test Methodology
 Benchmarks evaluate algorithmic accuracy, time-offset tolerance, and search latency across three primary operational dimensions:

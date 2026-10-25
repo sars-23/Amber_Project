@@ -1,4 +1,4 @@
-# EchoTrace: Algorithmic Specification
+# Amber: Algorithmic Specification
 
 ## 1. Mathematical Foundations
 

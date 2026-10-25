@@ -10,11 +10,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.echotrace</groupId>
-    <artifactId>echotrace-backend</artifactId>
+    <groupId>com.amber</groupId>
+    <artifactId>amber-backend</artifactId>
     <version>1.0.0</version>
-    <name>echotrace-backend</name>
-    <description>EchoTrace Acoustic Fingerprinting &amp; Real-Time Audio Search Engine</description>
+    <name>amber-backend</name>
+    <description>Amber Acoustic Fingerprinting &amp; Real-Time Audio Search Engine</description>
 
     <properties>
         <java.version>21</java.version>
