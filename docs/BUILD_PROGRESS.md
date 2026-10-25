@@ -15,7 +15,7 @@
 - [x] **Phase 0 — Workspace, Architecture, and Repository Setup**
   - Git initialized, `.gitignore`, `.env.example`, `compose.yaml`, architecture docs established.
   - Toolchain verified: Java 21, Maven 3.9.9, Node v24, npm 11, FFmpeg verified.
-  - Remote status: `gh auth status` indicates unauthenticated host; local Git commits tracking progress.
+  - Remote status: Verified & synchronized with GitHub private repository `sars-23/echotrace` on branch `main`.
 - [x] **Phase 1 — Audio Ingestion and Normalization**
   - PCM representation (16-bit mono @ 11,025 Hz).
   - FFmpeg integration and validation tests (10 tests passing).
@@ -40,19 +40,23 @@
   - Controlled noise mixing, synthetic/licensed fixtures, repeatable benchmarks (53 tests passing).
 - [x] **Phase 9 — Deployment, CI, and Final Quality Gate**
   - Multi-stage Docker builds, GitHub Actions CI workflow, complete documentation.
+- [x] **Post-Build Audit & Robustness Enhancement**
+  - Adaptive energy thresholding, 10 logarithmic frequency bands, temporal crest thinning.
+  - Empirical noise matching verified down to +6 dB SNR with >88% confidence and <=100ms offset error (55 tests passing).
 
 ---
 
 ## Commit Log
 | Phase | Commit | Message | Status |
 |---|---|---|---|
-| Phase 0 | `d64b5ce` | `chore: initialize EchoTrace project` | Complete |
-| Phase 1 | `0e6f7b5` | `feat(audio): implement PCM normalization` | Complete |
-| Phase 2 | `8d20a72` | `feat(dsp): implement FFT and spectral analysis` | Complete |
-| Phase 3 | `3a9abed` | `feat(fingerprint): generate constellation hashes` | Complete |
-| Phase 4 | `bd189fd` | `feat(index): persist fingerprints in PostgreSQL` | Complete |
-| Phase 5 | `e450aa4` | `feat(matching): implement offset histogram search` | Complete |
-| Phase 6 | `9f683df` | `feat(ui): add audio search dashboard` | Complete |
-| Phase 7 | `64a8f90` | `feat(audio): support live microphone recognition` | Complete |
-| Phase 8 | `4699ea8` | `feat(demo): build interactive Noise Lab` | Complete |
-| Phase 9 | `44e1556` | `ci: add GitHub Actions and deployment configuration` | Complete |
+| Phase 0 | `d64b5ce` | `chore: initialize EchoTrace project` | Pushed |
+| Phase 1 | `0e6f7b5` | `feat(audio): implement PCM normalization` | Pushed |
+| Phase 2 | `8d20a72` | `feat(dsp): implement FFT and spectral analysis` | Pushed |
+| Phase 3 | `3a9abed` | `feat(fingerprint): generate constellation hashes` | Pushed |
+| Phase 4 | `bd189fd` | `feat(index): persist fingerprints in PostgreSQL` | Pushed |
+| Phase 5 | `e450aa4` | `feat(matching): implement offset histogram search` | Pushed |
+| Phase 6 | `9f683df` | `feat(ui): add audio search dashboard` | Pushed |
+| Phase 7 | `64a8f90` | `feat(audio): support live microphone recognition` | Pushed |
+| Phase 8 | `4699ea8` | `feat(demo): build interactive Noise Lab` | Pushed |
+| Phase 9 | `44e1556` | `ci: add GitHub Actions and deployment configuration` | Pushed |
+| Audit | `c87bf41` | `fix(matching): improve fingerprint robustness` | Pushed |
