@@ -48,7 +48,7 @@ export const StatsOverview: React.FC<StatsOverviewProps> = ({ stats, health, loa
           </div>
         </div>
         <div className="text-xl font-bold tracking-tight text-emerald-400 font-mono">
-          {stats ? `${stats.sampleRate} Hz / N=${stats.fftFrameSize}` : '11,025 Hz / N=1024'}
+          {health ? `${health.sampleRate.toLocaleString()} Hz / N=${health.fftSize}` : '11,025 Hz / N=1024'}
         </div>
         <div className="text-xs text-slate-400 mt-1">Radix-2 Cooley-Tukey + Hann Window</div>
       </div>
@@ -62,13 +62,13 @@ export const StatsOverview: React.FC<StatsOverviewProps> = ({ stats, health, loa
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`w-2.5 h-2.5 rounded-full ${health?.databaseConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+          <span className={`w-2.5 h-2.5 rounded-full ${health?.database === 'CONNECTED' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
           <span className="text-lg font-bold text-white capitalize">
             {health?.status ?? 'Connecting...'}
           </span>
         </div>
         <div className="text-xs text-slate-400 mt-1">
-          {health?.databaseConnected ? 'PostgreSQL ready for query lookup' : 'Checking database status'}
+          {health?.database === 'CONNECTED' ? 'PostgreSQL ready for query lookup' : 'Checking database status'}
         </div>
       </div>
     </div>

@@ -32,15 +32,16 @@ export interface MatchResponse {
 export interface StatsResponse {
   totalSongs: number;
   totalFingerprints: number;
-  systemStatus: string;
-  database: string;
-  sampleRate: number;
-  fftFrameSize: number;
+  totalDurationMs: number;
+  totalSearches: number;
+  averageSearchLatencyMs: number;
 }
 
 export interface HealthResponse {
   status: string;
-  service: string;
-  timestamp: string;
-  databaseConnected: boolean;
+  version: string;
+  database: string;
+  sampleRate: number;
+  fftSize: number;
+  hopSize: number;
 }
