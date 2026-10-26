@@ -7,9 +7,10 @@ interface SongLibraryProps {
   songs: Song[];
   loading: boolean;
   onRefresh: () => void;
+  onOpenBulkImport?: () => void;
 }
 
-export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefresh }) => {
+export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefresh, onOpenBulkImport }) => {
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [title, setTitle] = useState<string>('');
@@ -73,13 +74,26 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefr
           </p>
         </div>
 
-        <button
-          onClick={() => setShowUploadModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-indigo-950/40"
-        >
-          <Plus className="w-4 h-4" />
-          Index New Track
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenBulkImport && (
+            <button
+              onClick={onOpenBulkImport}
+              className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-600/40 rounded-xl text-xs font-semibold transition-all shadow-sm"
+              title="Launch Bulk Music Importer"
+            >
+              <Plus className="w-4 h-4 text-amber-400" />
+              Bulk Import
+            </button>
+          )}
+
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition-all shadow-md shadow-indigo-950/40"
+          >
+            <Plus className="w-4 h-4" />
+            Index Single Track
+          </button>
+        </div>
       </div>
 
       {/* Table of Songs */}

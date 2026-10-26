@@ -4,12 +4,13 @@ import { fetchStats, fetchHealth, fetchSongs } from './services/apiClient';
 import { StatsOverview } from './components/StatsOverview';
 import { FileSearch } from './components/FileSearch';
 import { SongLibrary } from './components/SongLibrary';
+import { BulkImporter } from './components/BulkImporter';
 import { LiveMicrophoneRecognition } from './components/LiveMicrophoneRecognition';
 import { NoiseLab } from './components/NoiseLab';
 import type { Song, StatsResponse, HealthResponse } from './types/api';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'search' | 'library' | 'live' | 'noiselab'>('search');
+  const [activeTab, setActiveTab] = useState<'search' | 'library' | 'bulk' | 'live' | 'noiselab'>('search');
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [songs, setSongs] = useState<Song[]>([]);
@@ -115,6 +116,18 @@ export const App: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('bulk')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'bulk'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-bold'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            Bulk Importer
+          </button>
+
+          <button
             onClick={() => setActiveTab('live')}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
               activeTab === 'live'
@@ -147,7 +160,20 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'library' && (
-          <SongLibrary songs={songs} loading={loading} onRefresh={loadData} />
+          <SongLibrary
+            songs={songs}
+            loading={loading}
+            onRefresh={loadData}
+            onOpenBulkImport={() => setActiveTab('bulk')}
+          />
+        )}
+
+        {activeTab === 'bulk' && (
+          <BulkImporter
+            existingSongs={songs}
+            onImportComplete={loadData}
+            onNavigateToCatalog={() => setActiveTab('library')}
+          />
         )}
 
         {activeTab === 'live' && (
