@@ -4,7 +4,7 @@ This guide details the step-by-step process for deploying Amber to a real, publi
 - **Frontend**: Vercel (React 19 / TypeScript / Vite)
 - **Backend**: Render Web Service (Docker container with Java 21, Spring Boot 3, and FFmpeg)
 - **Database**: Neon Serverless PostgreSQL (or Render PostgreSQL)
-- **Repository**: GitHub (`https://github.com/sars-23/echotrace`)
+- **Repository**: GitHub (`https://github.com/sars-23/Amber_Project`)
 
 ---
 
@@ -63,7 +63,7 @@ Amber requires FFmpeg for decoding MP3, OGG, and M4A audio. The repository provi
 ### Step-by-Step Setup on Render:
 1. Go to [dashboard.render.com](https://dashboard.render.com).
 2. Click **New +** -> **Web Service**.
-3. Connect your GitHub repository: `sars-23/echotrace`.
+3. Connect your GitHub repository: `sars-23/Amber_Project`.
 4. Configure service details:
    - **Name**: `amber-backend`
    - **Region**: Choose closest to you (e.g. `Oregon (US West)` or `Frankfurt (EU)`)
@@ -101,7 +101,7 @@ The frontend is a Vite + React 19 application located in the `frontend/` directo
 
 ### Step-by-Step Setup on Vercel:
 1. Go to [vercel.com](https://vercel.com) and click **Add New...** -> **Project**.
-2. Import the GitHub repository: `sars-23/echotrace`.
+2. Import the GitHub repository: `sars-23/Amber_Project`.
 3. In **Project Settings**:
    - **Framework Preset**: `Vite`
    - **Root Directory**: Click *Edit* and select **`frontend`**

@@ -2,18 +2,22 @@ import type { Song, MatchResponse, StatsResponse, HealthResponse } from '../type
 
 export function getApiBaseUrl(): string {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
-  if (!envUrl) {
-    return '/api/v1';
+  if (envUrl) {
+    const clean = envUrl.replace(/\/+$/, '');
+    return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
   }
-  const clean = envUrl.replace(/\/+$/, '');
-  return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
+  // Production fallback when hosted on remote static domain
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return 'https://amber-backend-ler4.onrender.com/api/v1';
+  }
+  return '/api/v1';
 }
 
 export function getWebSocketUrl(): string {
   if (import.meta.env.VITE_WS_URL) {
     return import.meta.env.VITE_WS_URL;
   }
-  const apiBase = import.meta.env.VITE_API_BASE_URL;
+  const apiBase = getApiBaseUrl();
   if (apiBase && (apiBase.startsWith('http://') || apiBase.startsWith('https://'))) {
     const wsBase = apiBase
       .replace(/^http:\/\//, 'ws://')

@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
+import org.springframework.web.servlet.resource.NoResourceFoundException;
+
 import java.time.Instant;
 import java.util.Map;
 
@@ -17,6 +19,16 @@ import java.util.Map;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResourceFound(NoResourceFoundException ex) {
+        log.debug("Resource not found: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                "error", "Not Found",
+                "message", ex.getMessage(),
+                "timestamp", Instant.now()
+        ));
+    }
 
     @ExceptionHandler(AudioValidationException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(AudioValidationException ex) {

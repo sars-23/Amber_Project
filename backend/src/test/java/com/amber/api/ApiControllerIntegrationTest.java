@@ -99,4 +99,20 @@ class ApiControllerIntegrationTest {
                 .andExpect(jsonPath("$.estimatedOffsetMs").value(greaterThanOrEqualTo(900)))
                 .andExpect(jsonPath("$.estimatedOffsetMs").value(lessThanOrEqualTo(1100)));
     }
+
+    @Test
+    @DisplayName("GET /favicon.ico should return 200 OK with image/x-icon")
+    void testFaviconEndpoint() throws Exception {
+        mockMvc.perform(get("/favicon.ico"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("image/x-icon"));
+    }
+
+    @Test
+    @DisplayName("GET non-existent static resource should return 404 Not Found rather than 500")
+    void testMissingResourceReturns404() throws Exception {
+        mockMvc.perform(get("/missing-resource-" + System.currentTimeMillis() + ".png"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("Not Found"));
+    }
 }

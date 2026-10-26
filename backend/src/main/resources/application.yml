@@ -36,7 +36,7 @@ amber:
     fft-size: ${AMBER_FFT_SIZE:1024}
     hop-size: ${AMBER_HOP_SIZE:512}
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,https://*.vercel.app}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,https://*.onrender.com,https://*.vercel.app}
 
 management:
   endpoints:
