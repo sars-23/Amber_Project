@@ -1,4 +1,4 @@
-name: EchoTrace CI Quality Gate
+name: Amber CI Quality Gate
 
 on:
   push:
@@ -49,6 +49,7 @@ jobs:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/echotrace
           SPRING_DATASOURCE_USERNAME: echotrace
           SPRING_DATASOURCE_PASSWORD: echotrace_secret_password
+          SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
 
   frontend-build:
     name: Frontend Typecheck & Build (Node 20 / Vite)
@@ -68,6 +69,10 @@ jobs:
       - name: Install Frontend Dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Run Frontend Tests
+        working-directory: frontend
+        run: npm test
 
       - name: Run TypeScript & Vite Production Build
         working-directory: frontend
