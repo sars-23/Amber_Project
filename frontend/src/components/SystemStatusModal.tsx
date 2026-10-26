@@ -37,13 +37,16 @@ export const SystemStatusModal: React.FC<SystemStatusModalProps> = ({
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div>
-            <h2 id="system-status-title" className="text-base font-semibold text-gray-900">
-              Amber System Status
-            </h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Real-time diagnostic metrics from backend and PostgreSQL persistence
-            </p>
+          <div className="flex items-center gap-3">
+            <img src="/amber-logo.png" alt="Amber logo" className="w-7 h-7 object-contain flex-shrink-0" />
+            <div>
+              <h2 id="system-status-title" className="text-base font-semibold text-gray-900 leading-tight">
+                Amber System Status
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Real-time diagnostic metrics from backend and PostgreSQL persistence
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
