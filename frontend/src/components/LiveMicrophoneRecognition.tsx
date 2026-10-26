@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, MicOff, Radio, Volume2, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, Radio, Volume2, AlertCircle, RotateCcw } from 'lucide-react';
 import { WaveformVisualizer } from './WaveformVisualizer';
 import { MatchResultCard } from './MatchResultCard';
 import type { MatchResponse } from '../types/api';
@@ -20,33 +20,29 @@ export const LiveMicrophoneRecognition: React.FC = () => {
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cleanupAudio = useCallback(() => {
-    // Clear connection timeout
     if (connectionTimeoutRef.current) {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
     }
 
-    // Disconnect Worklet Node
     if (workletNodeRef.current) {
       try {
         workletNodeRef.current.disconnect();
       } catch {
-        // Safe ignore on disconnect
+        // Safe ignore
       }
       workletNodeRef.current = null;
     }
 
-    // Disconnect ScriptProcessor Node
     if (scriptNodeRef.current) {
       try {
         scriptNodeRef.current.disconnect();
       } catch {
-        // Safe ignore on disconnect
+        // Safe ignore
       }
       scriptNodeRef.current = null;
     }
 
-    // Close AudioContext
     if (audioContextRef.current) {
       try {
         audioContextRef.current.close().catch(() => {});
@@ -56,7 +52,6 @@ export const LiveMicrophoneRecognition: React.FC = () => {
       audioContextRef.current = null;
     }
 
-    // Stop MediaStream Tracks
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
         try {
@@ -69,7 +64,6 @@ export const LiveMicrophoneRecognition: React.FC = () => {
     }
     setStream(null);
 
-    // Close WebSocket
     if (wsRef.current) {
       try {
         if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
@@ -96,13 +90,12 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
     let mediaStream: MediaStream;
 
-    // 1. Request microphone access with descriptive diagnostics
+    // 1. Request microphone permission
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Microphone access requires a secure HTTPS connection or localhost.');
       }
 
-      console.log('[Amber Live] Requesting microphone access...');
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: { ideal: 1 },
@@ -114,23 +107,21 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
       streamRef.current = mediaStream;
       setStream(mediaStream);
-      console.log('[Amber Live] Microphone access granted.');
     } catch (err: unknown) {
       let friendlyError = 'Microphone access denied or unavailable.';
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          friendlyError = 'Microphone permission denied. Please allow microphone access in your browser settings to use live recognition.';
+          friendlyError = 'Microphone permission was denied. Please allow microphone access in your browser to use live recognition.';
         } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-          friendlyError = 'No microphone device found. Please attach an audio input device.';
+          friendlyError = 'No audio input device found. Please connect a microphone.';
         } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-          friendlyError = 'Microphone is currently in use by another application or process.';
+          friendlyError = 'Microphone is already in use by another application.';
         } else if (err.name === 'OverconstrainedError') {
-          friendlyError = 'Microphone hardware does not satisfy requested audio constraints.';
+          friendlyError = 'Audio hardware does not satisfy requested constraints.';
         }
       } else if (err instanceof Error) {
         friendlyError = err.message;
       }
-      console.warn('[Amber Live] Microphone error:', friendlyError);
       setErrorMessage(friendlyError);
       setStreamStatus('Permission Denied');
       cleanupAudio();
@@ -140,7 +131,6 @@ export const LiveMicrophoneRecognition: React.FC = () => {
     // 2. Establish WebSocket connection
     setStreamStatus('Connecting to Backend...');
     const wsUrl = getWebSocketUrl();
-    console.log('[Amber Live] Connecting WebSocket to:', wsUrl);
 
     let ws: WebSocket;
     try {
@@ -149,18 +139,16 @@ export const LiveMicrophoneRecognition: React.FC = () => {
       wsRef.current = ws;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to instantiate WebSocket';
-      console.error('[Amber Live] WebSocket creation error:', msg);
       setErrorMessage(`WebSocket initialization error: ${msg}`);
       setStreamStatus('Connection Failed');
       cleanupAudio();
       return;
     }
 
-    // Set 10-second connection timeout guard
+    // Guard timeout
     connectionTimeoutRef.current = setTimeout(() => {
       if (ws.readyState !== WebSocket.OPEN) {
-        console.warn('[Amber Live] WebSocket connection timed out after 10s');
-        setErrorMessage('WebSocket connection timed out. Ensure the Amber backend service is online and accessible.');
+        setErrorMessage('WebSocket connection timed out. Ensure the Amber backend service is online.');
         setStreamStatus('Connection Timeout');
         cleanupAudio();
       }
@@ -172,18 +160,15 @@ export const LiveMicrophoneRecognition: React.FC = () => {
         connectionTimeoutRef.current = null;
       }
 
-      console.log('[Amber Live] WebSocket connection established successfully.');
       setStreamStatus('Connected & Streaming');
       setIsListening(true);
 
-      // 3. Setup AudioContext and AudioWorklet
+      // 3. Audio graph with zero-gain speaker feedback prevention
       try {
         let audioCtx: AudioContext;
         try {
           audioCtx = new AudioContext({ sampleRate: 11025 });
         } catch {
-          // Fallback to system hardware sample rate if 11,025 Hz is not natively supported
-          console.log('[Amber Live] Context sampleRate 11,025 Hz not natively supported, falling back to system rate');
           audioCtx = new AudioContext();
         }
         audioContextRef.current = audioCtx;
@@ -194,7 +179,6 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
         const source = audioCtx.createMediaStreamSource(mediaStream);
 
-        // Silent GainNode to keep audio graph processing without routing mic to speakers (prevents feedback)
         const silentGain = audioCtx.createGain();
         silentGain.gain.setValueAtTime(0, audioCtx.currentTime);
         silentGain.connect(audioCtx.destination);
@@ -218,13 +202,11 @@ export const LiveMicrophoneRecognition: React.FC = () => {
           source.connect(workletNode);
           workletNode.connect(silentGain);
           workletLoaded = true;
-          console.log('[Amber Live] AudioWorklet PCM processor active');
-        } catch (workletErr) {
-          console.warn('[Amber Live] AudioWorklet failed, using ScriptProcessor fallback:', workletErr);
+        } catch {
+          // Fallback to ScriptProcessor if Worklet fails
         }
 
         if (!workletLoaded) {
-          // Fallback ScriptProcessor
           const scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
           scriptNodeRef.current = scriptNode;
 
@@ -270,10 +252,9 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
           source.connect(scriptNode);
           scriptNode.connect(silentGain);
-          console.log('[Amber Live] ScriptProcessor PCM streaming active');
         }
       } catch (audioInitErr) {
-        console.error('[Amber Live] Audio context initialization error:', audioInitErr);
+        console.error('[Amber Live] Audio context error:', audioInitErr);
         setErrorMessage('Failed to initialize audio capture pipeline.');
         stopListening('Audio Init Failed');
       }
@@ -294,24 +275,21 @@ export const LiveMicrophoneRecognition: React.FC = () => {
             message: data.matched ? undefined : 'Listening for song fingerprint...',
           };
           setLatestMatch(matchData);
-        } else if (data.type === 'RESET_ACK') {
-          console.log('[Amber Live] Server buffer reset acknowledged');
         }
       } catch (e) {
-        console.error('[Amber Live] Failed to parse WebSocket message', e);
+        console.error('[Amber Live] Failed to parse message', e);
       }
     };
 
     ws.onerror = (e) => {
-      console.error('[Amber Live] WebSocket transport error:', e);
+      console.error('[Amber Live] WebSocket error:', e);
       if (ws.readyState !== WebSocket.OPEN) {
-        setErrorMessage('WebSocket connection failed. Ensure Amber backend is running and accepts connections.');
+        setErrorMessage('WebSocket connection failed. Ensure the Amber backend service is reachable.');
         setStreamStatus('Connection Error');
       }
     };
 
     ws.onclose = (event) => {
-      console.log(`[Amber Live] WebSocket closed: code=${event.code}, reason=${event.reason || 'None'}, wasClean=${event.wasClean}`);
       if (connectionTimeoutRef.current) {
         clearTimeout(connectionTimeoutRef.current);
         connectionTimeoutRef.current = null;
@@ -321,11 +299,8 @@ export const LiveMicrophoneRecognition: React.FC = () => {
       if (event.code === 1000) {
         setStreamStatus('Stopped');
       } else if (event.code === 1006) {
-        setErrorMessage('WebSocket connection closed abnormally. Check network connection or backend availability.');
+        setErrorMessage('WebSocket connection closed abnormally. Verify network connection and backend health.');
         setStreamStatus('Connection Lost');
-      } else if (event.code === 1008) {
-        setErrorMessage('WebSocket connection rejected by backend origin policy.');
-        setStreamStatus('Forbidden');
       } else {
         setStreamStatus(`Disconnected (${event.code})`);
       }
@@ -340,87 +315,109 @@ export const LiveMicrophoneRecognition: React.FC = () => {
   }, [cleanupAudio]);
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Radio className="w-5 h-5 text-rose-500 animate-pulse" />
-            Live Microphone Recognition
-          </h2>
-          <p className="text-xs text-slate-400">
-            Real-time AudioWorklet capture streaming 16-bit PCM @ 11,025 Hz directly over WebSocket
-          </p>
-        </div>
+    <div className="max-w-3xl mx-auto space-y-6">
+      {/* Title & Introduction */}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+          Live Recognition
+        </h1>
+        <p className="text-sm text-gray-600 mt-1">
+          Stream microphone audio in real-time to continuously match ambient music against Amber's catalog.
+        </p>
+      </div>
 
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-mono text-slate-400 flex items-center gap-2">
+      {/* Control Chamber */}
+      <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
             <span
-              className={`w-2 h-2 rounded-full ${
-                isListening ? 'bg-rose-500 animate-ping' : 'bg-slate-600'
+              className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                isListening
+                  ? 'bg-red-500 animate-pulse'
+                  : streamStatus === 'Idle'
+                  ? 'bg-gray-400'
+                  : 'bg-amber-500'
               }`}
             />
-            {streamStatus}
-          </span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-700">
+              {streamStatus}
+            </span>
+          </div>
 
-          <button
-            onClick={isListening ? () => stopListening('Stopped') : startListening}
-            className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-lg ${
-              isListening
-                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-950/40'
-                : 'bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white shadow-rose-900/30'
-            }`}
-          >
-            {isListening ? (
-              <>
-                <MicOff className="w-4 h-4" />
-                Stop Listening
-              </>
-            ) : (
-              <>
-                <Mic className="w-4 h-4" />
-                Start Live Search
-              </>
+          <div className="flex items-center gap-2.5">
+            {errorMessage && !isListening && (
+              <button
+                onClick={startListening}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Retry Connection</span>
+              </button>
             )}
-          </button>
-        </div>
-      </div>
 
-      {/* Waveform Visualizer */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-          <span className="flex items-center gap-1.5">
-            <Volume2 className="w-4 h-4 text-cyan-400" />
-            Live Input Monitor (Time Domain)
-          </span>
-          <span className="font-mono text-slate-500">11,025 Hz / Mono</span>
-        </div>
-        <WaveformVisualizer stream={stream} isActive={isListening} color="#f43f5e" height={90} />
-      </div>
-
-      {/* Error Message */}
-      {errorMessage && (
-        <div className="p-4 bg-rose-950/40 border border-rose-800/50 rounded-xl flex items-center gap-3 text-rose-300 text-sm mb-4">
-          <AlertCircle className="w-5 h-5 flex-shrink-0" />
-          <span>{errorMessage}</span>
-        </div>
-      )}
-
-      {/* Real-time Match Card */}
-      {latestMatch ? (
-        <MatchResultCard result={latestMatch} />
-      ) : isListening ? (
-        <div className="p-6 border border-dashed border-rose-900/40 rounded-xl bg-rose-950/10 text-center text-slate-400">
-          <Radio className="w-6 h-6 text-rose-400 animate-pulse mx-auto mb-2" />
-          <div className="text-sm font-semibold text-slate-200">Listening to ambient audio...</div>
-          <div className="text-xs text-slate-500 mt-1">
-            Analyzing 4-second rolling window across indexed constellation fingerprints
+            <button
+              onClick={isListening ? () => stopListening('Stopped') : startListening}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                isListening
+                  ? 'bg-red-600 hover:bg-red-700 text-white focus:ring-red-500'
+                  : 'bg-amber-600 hover:bg-amber-700 text-white focus:ring-amber-500'
+              }`}
+            >
+              {isListening ? (
+                <>
+                  <MicOff className="w-4 h-4" />
+                  <span>Stop Listening</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="w-4 h-4" />
+                  <span>Start Live Search</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
-      ) : (
-        <div className="p-6 border border-dashed border-slate-800 rounded-xl bg-slate-950/40 text-center text-slate-500 text-xs">
-          Press <strong>Start Live Search</strong> to identify ambient songs playing near your microphone.
+
+        {/* Live Audio Monitor Canvas */}
+        <div>
+          <div className="flex items-center justify-between text-xs text-gray-500 mb-1.5">
+            <span className="flex items-center gap-1.5 font-medium text-gray-700">
+              <Volume2 className="w-3.5 h-3.5 text-amber-600" />
+              <span>Input Monitor (Time Domain)</span>
+            </span>
+            <span className="font-mono text-[11px] text-gray-400">11,025 Hz / Mono 16-bit</span>
+          </div>
+          <WaveformVisualizer stream={stream} isActive={isListening} color="#d97706" height={80} />
         </div>
-      )}
+
+        {/* Error Notification */}
+        {errorMessage && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3 text-red-700 text-sm">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-500 mt-0.5" />
+            <div>
+              <p className="font-medium">Live Recognition Warning</p>
+              <p className="text-xs text-red-600 mt-0.5">{errorMessage}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Real-time Status or Match */}
+        {latestMatch ? (
+          <MatchResultCard result={latestMatch} />
+        ) : isListening ? (
+          <div className="py-8 px-4 border border-dashed border-amber-300 rounded-xl bg-amber-50/40 text-center">
+            <Radio className="w-6 h-6 text-amber-600 animate-pulse mx-auto mb-2" />
+            <div className="text-sm font-semibold text-gray-900">Listening to ambient audio...</div>
+            <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+              Extracting acoustic constellation peaks across a 4-second rolling window and matching against indexed recordings.
+            </p>
+          </div>
+        ) : (
+          <div className="py-6 px-4 border border-dashed border-gray-200 rounded-xl bg-gray-50/60 text-center text-xs text-gray-500">
+            Press <strong className="font-semibold text-gray-800">Start Live Search</strong> to capture audio through your microphone and identify songs in real time.
+          </div>
+        )}
+      </div>
     </div>
   );
 };

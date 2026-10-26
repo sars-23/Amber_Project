@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Music, Trash2, Plus, Clock, Database, Loader2, AlertCircle } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Music, Trash2, Plus, Clock, Database, Loader2, AlertCircle, Search, FolderUp, X } from 'lucide-react';
 import { indexSong, deleteSong } from '../services/apiClient';
 import type { Song } from '../types/api';
 
@@ -10,7 +10,12 @@ interface SongLibraryProps {
   onOpenBulkImport?: () => void;
 }
 
-export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefresh, onOpenBulkImport }) => {
+export const SongLibrary: React.FC<SongLibraryProps> = ({
+  songs,
+  loading,
+  onRefresh,
+  onOpenBulkImport,
+}) => {
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [title, setTitle] = useState<string>('');
@@ -18,6 +23,7 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefr
   const [uploading, setUploading] = useState<boolean>(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   const formatDuration = (ms: number) => {
     const totalSecs = Math.floor(ms / 1000);
@@ -25,6 +31,18 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefr
     const secs = totalSecs % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const filteredSongs = useMemo(() => {
+    if (!searchQuery.trim()) return songs;
+    const q = searchQuery.toLowerCase();
+    return songs.filter(
+      (s) => s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q)
+    );
+  }, [songs, searchQuery]);
+
+  const totalFingerprints = useMemo(() => {
+    return songs.reduce((sum, s) => sum + (s.fingerprintCount || 0), 0);
+  }, [songs]);
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +65,7 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefr
   };
 
   const handleDelete = async (id: number, trackTitle: string) => {
-    if (!window.confirm(`Are you sure you want to delete "${trackTitle}" and all its fingerprints?`)) {
+    if (!window.confirm(`Delete "${trackTitle}" and remove its constellation fingerprints from the database?`)) {
       return;
     }
     setDeletingId(id);
@@ -62,122 +80,195 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefr
   };
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <div className="space-y-6">
+      {/* Top Header & Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Music className="w-5 h-5 text-indigo-400" />
-            Indexed Music Library
-          </h2>
-          <p className="text-xs text-slate-400">
-            Catalog of reference recordings whose constellation fingerprints are indexed in PostgreSQL
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+            Music Library
+          </h1>
+          <p className="text-sm text-gray-600 mt-1">
+            Reference audio tracks indexed in PostgreSQL for acoustic constellation matching.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           {onOpenBulkImport && (
             <button
               onClick={onOpenBulkImport}
-              className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-600/40 rounded-xl text-xs font-semibold transition-all shadow-sm"
-              title="Launch Bulk Music Importer"
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+              title="Batch import multiple audio files or entire folder"
             >
-              <Plus className="w-4 h-4 text-amber-400" />
-              Bulk Import
+              <FolderUp className="w-4 h-4 text-amber-600" />
+              <span>Bulk Import</span>
             </button>
           )}
 
           <button
             onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition-all shadow-md shadow-indigo-950/40"
+            className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors shadow-sm"
           >
             <Plus className="w-4 h-4" />
-            Index Single Track
+            <span>Index Single Track</span>
           </button>
         </div>
       </div>
 
-      {/* Table of Songs */}
-      {loading ? (
-        <div className="py-12 flex flex-col items-center justify-center text-slate-500">
-          <Loader2 className="w-8 h-8 animate-spin text-indigo-500 mb-2" />
-          <span className="text-sm">Loading library index...</span>
-        </div>
-      ) : songs.length === 0 ? (
-        <div className="py-12 text-center border border-dashed border-slate-800 rounded-xl">
-          <Music className="w-10 h-10 text-slate-600 mx-auto mb-2" />
-          <h3 className="text-sm font-semibold text-slate-300">No tracks indexed yet</h3>
-          <p className="text-xs text-slate-500 mt-1">
-            Upload and index your first reference audio recording to start searching.
-          </p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-800 text-xs text-slate-400 uppercase tracking-wider">
-                <th className="py-3 px-4">Track & Artist</th>
-                <th className="py-3 px-4">Duration</th>
-                <th className="py-3 px-4">Fingerprints</th>
-                <th className="py-3 px-4">Indexed On</th>
-                <th className="py-3 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 text-sm">
-              {songs.map((song) => (
-                <tr key={song.id} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-3.5 px-4">
-                    <div className="font-semibold text-white">{song.title}</div>
-                    <div className="text-xs text-slate-400">{song.artist}</div>
-                  </td>
-                  <td className="py-3.5 px-4 font-mono text-slate-300 text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-slate-500" />
-                      {formatDuration(song.durationMs)}
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-4 font-mono text-cyan-400 text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <Database className="w-3.5 h-3.5 text-slate-500" />
-                      {song.fingerprintCount.toLocaleString()} hashes
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-4 text-xs text-slate-400">
-                    {new Date(song.createdAt).toLocaleDateString()}
-                  </td>
-                  <td className="py-3.5 px-4 text-right">
-                    <button
-                      onClick={() => handleDelete(song.id, song.title)}
-                      disabled={deletingId === song.id}
-                      className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors rounded-lg hover:bg-rose-500/10"
-                      title="Delete track"
-                    >
-                      {deletingId === song.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Main Card */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        {/* Table Toolbar & Stats */}
+        <div className="p-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-50/50">
+          <div className="relative max-w-xs w-full">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by title or artist..."
+              className="w-full pl-9 pr-3 py-1.5 text-xs text-gray-900 bg-white border border-gray-200 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+            />
+          </div>
 
-      {/* Upload & Index Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl">
-            <h3 className="text-lg font-bold text-white mb-1">Index Audio Track</h3>
-            <p className="text-xs text-slate-400 mb-4">
-              Decode, extract spectral constellation peaks, and index into PostgreSQL
+          <div className="text-xs text-gray-500 font-medium">
+            {songs.length} {songs.length === 1 ? 'track' : 'tracks'} indexed • {totalFingerprints.toLocaleString()} total hashes
+          </div>
+        </div>
+
+        {/* Content Area */}
+        {loading ? (
+          <div className="py-16 flex flex-col items-center justify-center text-gray-500">
+            <Loader2 className="w-8 h-8 animate-spin text-amber-600 mb-2" />
+            <span className="text-sm font-medium">Loading catalog index...</span>
+          </div>
+        ) : songs.length === 0 ? (
+          /* Empty State */
+          <div className="py-16 px-6 text-center max-w-md mx-auto">
+            <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-3">
+              <Music className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-semibold text-gray-900">
+              No Reference Tracks Indexed
+            </h3>
+            <p className="text-xs text-gray-500 mt-1.5 mb-6">
+              Amber identifies audio clips by matching them against indexed reference recordings. Upload a track or folder to build your library.
             </p>
+            <div className="flex items-center justify-center gap-3">
+              <button
+                onClick={() => setShowUploadModal(true)}
+                className="px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-sm transition-colors"
+              >
+                Index Single Track
+              </button>
+              {onOpenBulkImport && (
+                <button
+                  onClick={onOpenBulkImport}
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg shadow-sm transition-colors"
+                >
+                  Bulk Import Folder
+                </button>
+              )}
+            </div>
+          </div>
+        ) : filteredSongs.length === 0 ? (
+          /* Filtered empty */
+          <div className="py-12 text-center text-gray-500">
+            <p className="text-sm">No tracks matched "{searchQuery}"</p>
+            <button
+              onClick={() => setSearchQuery('')}
+              className="mt-2 text-xs text-amber-600 hover:underline font-medium"
+            >
+              Clear search filter
+            </button>
+          </div>
+        ) : (
+          /* Populated Table */
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50/75 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                  <th className="py-3 px-4">Track Title</th>
+                  <th className="py-3 px-4">Artist</th>
+                  <th className="py-3 px-4">Duration</th>
+                  <th className="py-3 px-4">Fingerprints</th>
+                  <th className="py-3 px-4">Date Indexed</th>
+                  <th className="py-3 px-4 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-sm">
+                {filteredSongs.map((song) => (
+                  <tr key={song.id} className="hover:bg-gray-50/60 transition-colors">
+                    <td className="py-3 px-4 font-semibold text-gray-900">
+                      {song.title}
+                    </td>
+                    <td className="py-3 px-4 text-gray-600 text-xs">
+                      {song.artist}
+                    </td>
+                    <td className="py-3 px-4 text-xs font-mono text-gray-600">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-gray-400" />
+                        <span>{formatDuration(song.durationMs)}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-xs font-mono text-gray-600">
+                      <div className="flex items-center gap-1.5">
+                        <Database className="w-3.5 h-3.5 text-gray-400" />
+                        <span>{song.fingerprintCount.toLocaleString()} hashes</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-xs text-gray-500">
+                      {new Date(song.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        onClick={() => handleDelete(song.id, song.title)}
+                        disabled={deletingId === song.id}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Delete track"
+                        aria-label={`Delete ${song.title}`}
+                      >
+                        {deletingId === song.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-red-600" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
-            <form onSubmit={handleUploadSubmit} className="space-y-4">
+      {/* Index Single Track Modal */}
+      {showUploadModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setShowUploadModal(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-labelledby="index-track-modal-title"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h2 id="index-track-modal-title" className="text-base font-semibold text-gray-900">
+                Index Single Audio Track
+              </h2>
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUploadSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Track Title
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Track Title <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -185,13 +276,13 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefr
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g. Moonlight Sonata"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Artist / Source
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Artist / Source <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -199,51 +290,51 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({ songs, loading, onRefr
                   value={artist}
                   onChange={(e) => setArtist(e.target.value)}
                   placeholder="e.g. Ludwig van Beethoven"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Audio File (WAV, MP3, FLAC)
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Audio File (WAV, MP3, FLAC) <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="file"
                   required
-                  accept="audio/*"
+                  accept="audio/*,.wav,.mp3,.flac,.ogg"
                   onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                  className="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer"
+                  className="w-full text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"
                 />
               </div>
 
               {uploadError && (
-                <div className="p-3 bg-rose-950/40 border border-rose-800/50 rounded-lg flex items-center gap-2 text-rose-300 text-xs">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-500" />
                   <span>{uploadError}</span>
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-gray-100">
                 <button
                   type="button"
                   onClick={() => setShowUploadModal(false)}
                   disabled={uploading}
-                  className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white"
+                  className="px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={uploading || !uploadFile || !title || !artist}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg text-xs font-semibold flex items-center gap-2 shadow"
+                  disabled={uploading || !uploadFile || !title.trim() || !artist.trim()}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:bg-gray-200 disabled:text-gray-400 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
                 >
                   {uploading ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Normalizing & Indexing...
+                      <span>Fingerprinting & Indexing...</span>
                     </>
                   ) : (
-                    'Index Recording'
+                    <span>Index Track</span>
                   )}
                 </button>
               </div>

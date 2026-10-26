@@ -1,5 +1,5 @@
-import React from 'react';
-import { CheckCircle2, XCircle, Clock, Zap, Hash, AlignLeft } from 'lucide-react';
+import React, { useState } from 'react';
+import { CheckCircle2, AlertTriangle, Clock, Hash, Zap, Timer, ChevronDown, ChevronUp } from 'lucide-react';
 import type { MatchResponse } from '../types/api';
 
 interface MatchResultCardProps {
@@ -7,6 +7,8 @@ interface MatchResultCardProps {
 }
 
 export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState<boolean>(false);
+
   const {
     matched,
     song,
@@ -19,7 +21,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
     message,
   } = result;
 
-  // Format offset in minutes:seconds.fraction
+  // Format offset in minutes:seconds.centiseconds
   const formatOffset = (ms: number) => {
     const isNegative = ms < 0;
     const absMs = Math.abs(ms);
@@ -39,151 +41,181 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
 
   const maxVotes = Math.max(...histogramEntries.map((e) => e.votes), 1);
 
+  if (!matched) {
+    return (
+      <div className="mt-6 bg-white border border-gray-200 rounded-xl p-6 shadow-sm animate-in fade-in">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 flex-shrink-0">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900">
+                No Confident Match Found
+              </h3>
+              <span className="text-xs font-mono font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
+                {(confidence * 100).toFixed(1)}% confidence
+              </span>
+            </div>
+            <p className="text-sm text-gray-600 mt-1">
+              {message || 'The audio query constellation did not align with any recording in Amber\'s indexed catalog.'}
+            </p>
+            <div className="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+              <p className="font-medium text-gray-700">Troubleshooting tips:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-gray-600">
+                <li>Check that the source song is indexed in the <span className="font-medium text-gray-800">Library</span>.</li>
+                <li>Provide a longer excerpt (3–10 seconds provides more constellation peak pairs).</li>
+                <li>Ensure the audio clip contains recognizable melodic or harmonic content.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`mt-6 rounded-2xl border p-6 transition-all duration-300 shadow-xl backdrop-blur-md ${
-      matched
-        ? 'bg-slate-900/90 border-cyan-500/30 ring-1 ring-cyan-500/20'
-        : 'bg-slate-900/80 border-slate-800'
-    }`}>
-      {/* Header status */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+    <div className="mt-6 bg-white border border-gray-200 rounded-xl p-6 shadow-sm animate-in fade-in">
+      {/* Success Banner */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-5 border-b border-gray-100">
         <div className="flex items-center gap-3">
-          {matched ? (
-            <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl flex items-center justify-center">
-              <CheckCircle2 className="w-6 h-6" />
-            </div>
-          ) : (
-            <div className="p-2.5 bg-amber-500/10 text-amber-400 rounded-xl flex items-center justify-center">
-              <XCircle className="w-6 h-6" />
-            </div>
-          )}
+          <div className="w-10 h-10 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 flex-shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
           <div>
-            <h3 className="text-lg font-bold text-white">
-              {matched ? 'Track Identified' : 'No Confident Match'}
+            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
+              Match Identified
+            </span>
+            <h3 className="text-xl font-bold text-gray-900 leading-tight">
+              {song?.title}
             </h3>
-            <p className="text-xs text-slate-400">
-              {matched
-                ? 'Time-coherent constellation peak detected'
-                : message || 'Query fingerprints showed insufficient time coherence'}
+            <p className="text-sm text-gray-600 font-medium">
+              by {song?.artist}
             </p>
           </div>
         </div>
 
-        {/* Confidence pill */}
-        <div className="text-right">
-          <div className="text-xs text-slate-400 mb-0.5">Confidence</div>
-          <span className={`inline-block px-3 py-1 rounded-full text-xs font-mono font-bold ${
-            confidence > 0.6
-              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-              : confidence > 0.3
-              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-              : 'bg-slate-800 text-slate-400'
+        {/* Confidence badge */}
+        <div className="flex sm:flex-col items-center sm:items-end justify-between">
+          <span className="text-xs text-gray-500 mb-0.5 sm:block">Match Confidence</span>
+          <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-mono font-semibold ${
+            confidence >= 0.7
+              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              : confidence >= 0.4
+              ? 'bg-amber-50 text-amber-800 border border-amber-200'
+              : 'bg-gray-100 text-gray-700'
           }`}>
-            {(confidence * 100).toFixed(1)}%
+            {(confidence * 100).toFixed(1)}% match
           </span>
         </div>
       </div>
 
-      {/* Identified Track Details */}
-      {matched && song && (
-        <div className="py-5 border-b border-slate-800">
-          <div className="text-xs font-semibold text-cyan-400 tracking-wider uppercase mb-1">
-            Matching Song
+      {/* Primary Metrics Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4">
+        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
+            <Clock className="w-3.5 h-3.5 text-gray-400" />
+            <span>Offset</span>
           </div>
-          <h2 className="text-2xl font-black text-white tracking-tight">{song.title}</h2>
-          <div className="text-sm font-medium text-slate-300 mt-0.5">by {song.artist}</div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-            <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
-                <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Estimated Offset</span>
-              </div>
-              <div className="text-base font-mono font-bold text-white">
-                {formatOffset(estimatedOffsetMs)}
-              </div>
-            </div>
-
-            <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
-                <Hash className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Matched Hashes</span>
-              </div>
-              <div className="text-base font-mono font-bold text-white">
-                {matchedFingerprints} <span className="text-xs text-slate-500">/ {totalQueryFingerprints}</span>
-              </div>
-            </div>
-
-            <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
-                <Zap className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Peak Votes</span>
-              </div>
-              <div className="text-base font-mono font-bold text-white">
-                {diagnostics?.peakVotes ?? matchedFingerprints}
-              </div>
-            </div>
-
-            <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
-                <AlignLeft className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Search Latency</span>
-              </div>
-              <div className="text-base font-mono font-bold text-white">
-                {processingTimeMs.toFixed(1)} ms
-              </div>
-            </div>
+          <div className="text-sm font-semibold font-mono text-gray-900">
+            {formatOffset(estimatedOffsetMs)}
           </div>
+          <div className="text-[11px] text-gray-500 mt-0.5">Position in song</div>
         </div>
-      )}
 
-      {/* Offset Histogram Visualization */}
+        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
+            <Hash className="w-3.5 h-3.5 text-gray-400" />
+            <span>Matched Hashes</span>
+          </div>
+          <div className="text-sm font-semibold font-mono text-gray-900">
+            {matchedFingerprints} <span className="text-xs text-gray-500">/ {totalQueryFingerprints}</span>
+          </div>
+          <div className="text-[11px] text-gray-500 mt-0.5">Constellation pairs</div>
+        </div>
+
+        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
+            <Zap className="w-3.5 h-3.5 text-gray-400" />
+            <span>Peak Votes</span>
+          </div>
+          <div className="text-sm font-semibold font-mono text-gray-900">
+            {diagnostics?.peakVotes ?? matchedFingerprints}
+          </div>
+          <div className="text-[11px] text-gray-500 mt-0.5">Coherent offset bin</div>
+        </div>
+
+        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
+            <Timer className="w-3.5 h-3.5 text-gray-400" />
+            <span>Search Latency</span>
+          </div>
+          <div className="text-sm font-semibold font-mono text-gray-900">
+            {processingTimeMs.toFixed(1)} ms
+          </div>
+          <div className="text-[11px] text-gray-500 mt-0.5">PostgreSQL lookup</div>
+        </div>
+      </div>
+
+      {/* Progressive Disclosure Toggle */}
       {histogramEntries.length > 0 && (
-        <div className="pt-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase">
-              Time-Offset Histogram (Δt = t_db - t_query)
-            </span>
-            <span className="text-xs text-slate-500 font-mono">
-              Coherence Score: {diagnostics?.coherenceScore?.toFixed(2) ?? '—'}
-            </span>
-          </div>
+        <div className="pt-2 border-t border-gray-100">
+          <button
+            onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+            className="flex items-center justify-between w-full py-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            <span>Time-offset histogram and coherence diagnostics</span>
+            {showTechnicalDetails ? (
+              <ChevronUp className="w-4 h-4 text-gray-500" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-gray-500" />
+            )}
+          </button>
 
-          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800/80">
-            <div className="h-24 flex items-end gap-1.5 w-full overflow-x-auto pb-1">
-              {histogramEntries.map(({ bucket, votes }) => {
-                const heightPercent = Math.max((votes / maxVotes) * 100, 6);
-                const isPeak = votes === maxVotes;
-                return (
-                  <div
-                    key={bucket}
-                    className="flex-1 min-w-[12px] flex flex-col items-center group relative cursor-pointer"
-                  >
-                    {/* Tooltip */}
-                    <div className="absolute bottom-full mb-1 hidden group-hover:flex flex-col items-center z-10 pointer-events-none">
-                      <div className="bg-slate-800 text-[10px] text-white font-mono px-2 py-0.5 rounded shadow border border-slate-700 whitespace-nowrap">
-                        {bucket}ms: {votes} votes
-                      </div>
-                    </div>
-                    {/* Bar */}
+          {showTechnicalDetails && (
+            <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center justify-between mb-3 text-xs">
+                <span className="font-medium text-gray-700">Offset Histogram (Δt = t_catalog − t_query)</span>
+                <span className="font-mono text-gray-500">
+                  Coherence Score: {diagnostics?.coherenceScore?.toFixed(2) ?? '—'}
+                </span>
+              </div>
+
+              {/* Histogram Bars */}
+              <div className="h-24 flex items-end gap-1 w-full overflow-x-auto pb-1 bg-white p-2 rounded border border-gray-200">
+                {histogramEntries.map(({ bucket, votes }) => {
+                  const heightPercent = Math.max((votes / maxVotes) * 100, 6);
+                  const isPeak = votes === maxVotes;
+                  return (
                     <div
-                      style={{ height: `${heightPercent}%` }}
-                      className={`w-full rounded-t transition-all ${
-                        isPeak
-                          ? 'bg-gradient-to-t from-cyan-600 to-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.5)]'
-                          : 'bg-slate-700 hover:bg-slate-600'
-                      }`}
-                    />
-                  </div>
-                );
-              })}
+                      key={bucket}
+                      className="flex-1 min-w-[10px] flex flex-col items-center group relative cursor-pointer"
+                    >
+                      <div className="absolute bottom-full mb-1 hidden group-hover:flex flex-col items-center z-10 pointer-events-none">
+                        <div className="bg-gray-800 text-[10px] text-white font-mono px-2 py-0.5 rounded shadow whitespace-nowrap">
+                          {bucket}ms: {votes} votes
+                        </div>
+                      </div>
+                      <div
+                        style={{ height: `${heightPercent}%` }}
+                        className={`w-full rounded-t transition-all ${
+                          isPeak
+                            ? 'bg-amber-600'
+                            : 'bg-gray-300 hover:bg-gray-400'
+                        }`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-between text-[11px] text-gray-500 font-mono mt-1 px-1">
+                <span>{histogramEntries[0]?.bucket}ms</span>
+                <span className="text-amber-700 font-medium">Peak bucket: {diagnostics?.peakOffsetBucketMs}ms</span>
+                <span>{histogramEntries[histogramEntries.length - 1]?.bucket}ms</span>
+              </div>
             </div>
-            <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-1 px-1">
-              <span>{histogramEntries[0]?.bucket}ms</span>
-              <span className="text-cyan-400 font-semibold">Peak: {diagnostics?.peakOffsetBucketMs}ms</span>
-              <span>{histogramEntries[histogramEntries.length - 1]?.bucket}ms</span>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>

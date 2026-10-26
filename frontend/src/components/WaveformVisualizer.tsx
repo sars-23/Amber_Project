@@ -12,7 +12,7 @@ export const WaveformVisualizer: React.FC<WaveformVisualizerProps> = ({
   stream,
   audioBlob,
   isActive,
-  color = '#06b6d4', // cyan-500
+  color = '#d97706', // warm amber-600
   height = 80,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -27,10 +27,10 @@ export const WaveformVisualizer: React.FC<WaveformVisualizerProps> = ({
     if (!ctx) return;
 
     if (!isActive && !audioBlob) {
-      // Draw quiet baseline
+      // Draw resting baseline
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(0, canvas.height / 2);
       ctx.lineTo(canvas.width, canvas.height / 2);
@@ -55,7 +55,7 @@ export const WaveformVisualizer: React.FC<WaveformVisualizerProps> = ({
         animationFrameIdRef.current = requestAnimationFrame(draw);
         analyser.getByteTimeDomainData(dataArray);
 
-        ctx.fillStyle = '#090d16';
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         ctx.lineWidth = 2;
@@ -91,7 +91,7 @@ export const WaveformVisualizer: React.FC<WaveformVisualizerProps> = ({
   }, [stream, isActive, color, audioBlob]);
 
   return (
-    <div className="w-full bg-slate-950/80 rounded-lg border border-slate-800/80 overflow-hidden shadow-inner">
+    <div className="w-full bg-white rounded-lg border border-gray-200 overflow-hidden shadow-inner">
       <canvas
         ref={canvasRef}
         width={600}
