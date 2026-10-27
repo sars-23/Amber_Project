@@ -39,3 +39,10 @@ temp/
 *.log
 postgres-data/
 scratch/
+
+# Scripts, Local Datasets & Evaluation Reports
+scripts/reports/
+*-report.json
+*-report.csv
+scripts/data/
+audio-data/

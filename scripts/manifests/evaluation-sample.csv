@@ -1,0 +1,7 @@
+query_path,expected_title,expected_artist,expected_offset_ms,label
+excerpts/acoustic_breeze_crop3s.wav,Acoustic Breeze,Benjamin Tissot,3000,clean-crop-3s
+excerpts/acoustic_breeze_crop10s.wav,Acoustic Breeze,Benjamin Tissot,10000,clean-crop-10s
+excerpts/acoustic_breeze_snr20db.wav,Acoustic Breeze,Benjamin Tissot,3000,snr-20db
+excerpts/acoustic_breeze_snr6db.wav,Acoustic Breeze,Benjamin Tissot,3000,snr-6db
+excerpts/sunny_afternoon_midcrop.mp3,Sunny Afternoon,Open Audio Collective,4500,clean-crop-mid
+excerpts/ambient_white_noise.wav,,,,negative-control

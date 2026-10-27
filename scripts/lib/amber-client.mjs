@@ -1,0 +1,248 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+/**
+ * Client for interacting with the Amber REST API.
+ * Encapsulates authentication, secret redaction, pagination, and retry logic.
+ */
+export class AmberClient {
+  /**
+   * @param {Object} options
+   * @param {string} [options.apiUrl] - Base API URL (e.g. http://localhost:8080/api/v1)
+   * @param {string} [options.adminApiKey] - Administrative secret token
+   * @param {number} [options.timeoutMs=30000] - Request timeout in milliseconds
+   * @param {number} [options.maxRetries=3] - Maximum retry attempts for transient errors
+   * @param {typeof fetch} [options.customFetch] - Optional fetch implementation for testing
+   */
+  constructor(options = {}) {
+    let url = options.apiUrl || 'http://localhost:8080/api/v1';
+    // Strip trailing slash
+    this.apiUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+    this.adminApiKey = options.adminApiKey ? String(options.adminApiKey).trim() : '';
+    this.timeoutMs = options.timeoutMs || 30_000;
+    this.maxRetries = options.maxRetries !== undefined ? options.maxRetries : 3;
+    this.fetch = options.customFetch || globalThis.fetch;
+  }
+
+  /**
+   * Redacts the administrative secret key from any string or error message.
+   *
+   * @param {string} text
+   * @returns {string}
+   */
+  redact(text) {
+    if (!text || typeof text !== 'string') return text;
+    if (!this.adminApiKey || this.adminApiKey.length < 3) return text;
+    return text.replaceAll(this.adminApiKey, '[REDACTED]');
+  }
+
+  /**
+   * Checks backend health status.
+   *
+   * @returns {Promise<{ status: string, database?: string, version?: string }>}
+   */
+  async getHealth() {
+    const res = await this._fetchWithRetry(`${this.apiUrl}/health`, {
+      method: 'GET'
+    });
+    if (!res.ok) {
+      throw new Error(`Health check failed with HTTP ${res.status}: ${res.statusText}`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Fetches the entire existing catalogue using pagination.
+   *
+   * @returns {Promise<Array<{ id: number, title: string, artist: string, durationMs: number, fingerprintCount: number }>>}
+   */
+  async fetchCatalogue() {
+    const allSongs = [];
+    let page = 0;
+    const pageSize = 100;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = `${this.apiUrl}/songs?page=${page}&size=${pageSize}`;
+      const res = await this._fetchWithRetry(url, { method: 'GET' });
+
+      if (!res.ok) {
+        const bodyText = await res.text();
+        throw new Error(this.redact(`Failed to list catalogue songs (page ${page}) - HTTP ${res.status}: ${bodyText}`));
+      }
+
+      const items = await res.json();
+      if (!Array.isArray(items) || items.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      allSongs.push(...items);
+      if (items.length < pageSize) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+
+    return allSongs;
+  }
+
+  /**
+   * Uploads and indexes a single audio track.
+   *
+   * @param {string} filePath - Absolute or resolved path to local audio file
+   * @param {string} title - Song title
+   * @param {string} artist - Song artist
+   * @returns {Promise<{ id: number, title: string, artist: string, durationMs: number, fingerprintCount: number }>}
+   */
+  async uploadSong(filePath, title, artist) {
+    if (!this.adminApiKey) {
+      throw new Error('Administrative API key required for upload. Configure AMBER_ADMIN_API_KEY.');
+    }
+
+    const fileBuffer = await fs.promises.readFile(filePath);
+    const fileName = path.basename(filePath);
+
+    const formData = new FormData();
+    const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+    formData.append('file', blob, fileName);
+    formData.append('title', title);
+    formData.append('artist', artist);
+
+    const headers = {
+      'X-Amber-Admin-Key': this.adminApiKey,
+      'Authorization': `Bearer ${this.adminApiKey}`
+    };
+
+    const res = await this._fetchWithRetry(`${this.apiUrl}/songs`, {
+      method: 'POST',
+      headers,
+      body: formData
+    });
+
+    if (res.status === 201) {
+      return res.json();
+    }
+
+    const bodyText = await res.text();
+    const cleanError = this.redact(bodyText);
+
+    if (res.status === 401) {
+      throw new Error(`Authentication failed (HTTP 401 Unauthorized): ${cleanError || 'Invalid or missing admin credentials'}`);
+    }
+    if (res.status === 403) {
+      throw new Error(`Authentication forbidden (HTTP 403 Forbidden): ${cleanError || 'Admin key rejected or server unconfigured'}`);
+    }
+    if (res.status === 400) {
+      throw new Error(`Upload rejected (HTTP 400 Bad Request): ${cleanError}`);
+    }
+    if (res.status === 413) {
+      throw new Error(`File too large (HTTP 413 Payload Too Large): ${cleanError}`);
+    }
+
+    throw new Error(`Upload failed with HTTP ${res.status}: ${cleanError}`);
+  }
+
+  /**
+   * Submits an audio query to POST /api/v1/search and records latency.
+   *
+   * @param {string} filePath - Path to audio query excerpt
+   * @returns {Promise<{ result: Object, latencyMs: number }>}
+   */
+  async searchAudio(filePath) {
+    const fileBuffer = await fs.promises.readFile(filePath);
+    const fileName = path.basename(filePath);
+
+    const formData = new FormData();
+    const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+    formData.append('file', blob, fileName);
+
+    const startTime = performance.now();
+    const res = await this._fetchWithRetry(`${this.apiUrl}/search`, {
+      method: 'POST',
+      body: formData
+    });
+    const latencyMs = Math.round(performance.now() - startTime);
+
+    if (!res.ok) {
+      const bodyText = await res.text();
+      throw new Error(this.redact(`Search request failed with HTTP ${res.status}: ${bodyText}`));
+    }
+
+    const result = await res.json();
+    return { result, latencyMs };
+  }
+
+  /**
+   * Internal fetch wrapper supporting exponential backoff, rate limits (429), and timeout.
+   *
+   * @private
+   */
+  async _fetchWithRetry(url, options) {
+    let attempt = 0;
+
+    while (attempt <= this.maxRetries) {
+      attempt++;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
+      try {
+        const response = await this.fetch(url, {
+          ...options,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        // Handle rate limiting (429)
+        if (response.status === 429 && attempt <= this.maxRetries) {
+          const retryAfterHeader = response.headers?.get ? response.headers.get('Retry-After') : null;
+          let delayMs = 2000;
+          if (retryAfterHeader) {
+            const parsed = parseInt(retryAfterHeader, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+              delayMs = parsed * 1000;
+            }
+          }
+          await sleep(delayMs);
+          continue;
+        }
+
+        // Retry transient server errors (500, 502, 503, 504)
+        if ([500, 502, 503, 504].includes(response.status) && attempt <= this.maxRetries) {
+          const backoff = calculateBackoff(attempt);
+          await sleep(backoff);
+          continue;
+        }
+
+        return response;
+      } catch (err) {
+        clearTimeout(timeoutId);
+        const isAbort = err.name === 'AbortError';
+        const isNetwork = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.message?.includes('fetch failed');
+
+        if ((isAbort || isNetwork) && attempt <= this.maxRetries) {
+          const backoff = calculateBackoff(attempt);
+          await sleep(backoff);
+          continue;
+        }
+
+        const msg = isAbort ? `Request timed out after ${this.timeoutMs}ms` : err.message;
+        throw new Error(this.redact(msg));
+      }
+    }
+
+    throw new Error(this.redact(`Failed after ${this.maxRetries} retry attempts: ${url}`));
+  }
+}
+
+function calculateBackoff(attempt) {
+  // Exponential backoff: 500ms, 1000ms, 2000ms + random jitter up to 250ms
+  const base = Math.min(5000, 500 * Math.pow(2, attempt - 1));
+  const jitter = Math.floor(Math.random() * 250);
+  return base + jitter;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
