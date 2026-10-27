@@ -11,6 +11,8 @@ export const LiveMicrophoneRecognition: React.FC = () => {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [latestMatch, setLatestMatch] = useState<MatchResponse | null>(null);
   const [streamStatus, setStreamStatus] = useState<string>('Idle');
+  const [interimMessage, setInterimMessage] = useState<string>('Listening to ambient audio...');
+  const [sessionSummary, setSessionSummary] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -18,11 +20,17 @@ export const LiveMicrophoneRecognition: React.FC = () => {
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const scriptNodeRef = useRef<ScriptProcessorNode | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const maxDurationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cleanupAudio = useCallback(() => {
     if (connectionTimeoutRef.current) {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
+    }
+
+    if (maxDurationTimeoutRef.current) {
+      clearTimeout(maxDurationTimeoutRef.current);
+      maxDurationTimeoutRef.current = null;
     }
 
     if (workletNodeRef.current) {
@@ -79,6 +87,12 @@ export const LiveMicrophoneRecognition: React.FC = () => {
   const stopListening = useCallback((customStatus?: string) => {
     setIsListening(false);
     setStreamStatus(customStatus || 'Stopped');
+    setLatestMatch((prev) => {
+      if (!prev) {
+        setSessionSummary('No confident match was identified during this listening session.');
+      }
+      return prev;
+    });
     cleanupAudio();
   }, [cleanupAudio]);
 
@@ -86,6 +100,8 @@ export const LiveMicrophoneRecognition: React.FC = () => {
     cleanupAudio();
     setErrorMessage(null);
     setLatestMatch(null);
+    setSessionSummary(null);
+    setInterimMessage('Listening to ambient audio...');
     setStreamStatus('Requesting Microphone...');
 
     let mediaStream: MediaStream;
@@ -162,6 +178,11 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
       setStreamStatus('Connected & Streaming');
       setIsListening(true);
+
+      // Max 60 seconds listening guard to prevent unattended microphone/buffer capture
+      maxDurationTimeoutRef.current = setTimeout(() => {
+        stopListening('Session Limit Reached (60s)');
+      }, 60000);
 
       // 3. Audio graph with zero-gain speaker feedback prevention
       try {
@@ -264,17 +285,31 @@ export const LiveMicrophoneRecognition: React.FC = () => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'MATCH_UPDATE') {
-          const matchData: MatchResponse = {
-            matched: data.matched,
-            song: data.song,
-            confidence: data.confidence,
-            estimatedOffsetMs: data.estimatedOffsetMs,
-            matchedFingerprints: data.matchedFingerprints,
-            totalQueryFingerprints: data.totalQueryFingerprints,
-            processingTimeMs: data.processingTimeMs,
-            message: data.matched ? undefined : 'Listening for song fingerprint...',
-          };
-          setLatestMatch(matchData);
+          if (data.matched && data.song) {
+            const matchData: MatchResponse = {
+              matched: true,
+              song: data.song,
+              confidence: data.confidence ?? 0,
+              estimatedOffsetMs: data.estimatedOffsetMs,
+              matchedFingerprints: data.matchedFingerprints ?? data.matchingHashes ?? 0,
+              totalQueryFingerprints: data.totalQueryFingerprints ?? 0,
+              processingTimeMs: data.processingTimeMs ?? data.searchDurationMs ?? 0,
+              searchDurationMs: data.searchDurationMs ?? data.processingTimeMs ?? 0,
+            };
+            setLatestMatch(matchData);
+            setStreamStatus('Match Identified');
+          } else {
+            // Interim evaluation: rolling audio window did not match any indexed track yet.
+            // DO NOT stop listening and DO NOT overwrite with failure screen!
+            const queryFps = data.totalQueryFingerprints ?? 0;
+            const latency = typeof data.processingTimeMs === 'number'
+              ? `${data.processingTimeMs.toFixed(0)}ms`
+              : typeof data.searchDurationMs === 'number'
+              ? `${data.searchDurationMs.toFixed(0)}ms`
+              : '';
+            const details = latency ? ` (${queryFps} constellation peaks, ${latency})` : '';
+            setInterimMessage(`Analyzing audio${details} — listening for match...`);
+          }
         }
       } catch (e) {
         console.error('[Amber Live] Failed to parse message', e);
@@ -403,13 +438,30 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
         {/* Real-time Status or Match */}
         {latestMatch ? (
-          <MatchResultCard result={latestMatch} />
+          <div className="space-y-3">
+            <MatchResultCard result={latestMatch} />
+            {isListening && (
+              <div className="flex items-center justify-between text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3.5 py-2">
+                <span className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Microphone streaming is active. Click <strong>Stop Listening</strong> when finished.</span>
+                </span>
+              </div>
+            )}
+          </div>
         ) : isListening ? (
           <div className="py-8 px-4 border border-dashed border-amber-300 rounded-xl bg-amber-50/40 text-center">
             <Radio className="w-6 h-6 text-amber-600 animate-pulse mx-auto mb-2" />
-            <div className="text-sm font-semibold text-gray-900">Listening to ambient audio...</div>
+            <div className="text-sm font-semibold text-gray-900">{interimMessage}</div>
             <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
               Extracting acoustic constellation peaks across a 4-second rolling window and matching against indexed recordings.
+            </p>
+          </div>
+        ) : sessionSummary ? (
+          <div className="py-6 px-4 border border-dashed border-gray-300 rounded-xl bg-gray-50 text-center text-xs text-gray-600 space-y-1">
+            <p className="font-semibold text-gray-800">{sessionSummary}</p>
+            <p className="text-gray-500 max-w-md mx-auto">
+              Tip: Position your microphone closer to the audio source, minimize ambient noise, or ensure the song is indexed in the <span className="font-medium text-gray-700">Library</span>.
             </p>
           </div>
         ) : (

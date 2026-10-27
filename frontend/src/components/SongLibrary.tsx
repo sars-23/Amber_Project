@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Music, Trash2, Plus, Clock, Database, Loader2, AlertCircle, Search, FolderUp, X } from 'lucide-react';
+import { Music, Trash2, Plus, Clock, Database, Loader2, AlertCircle, Search, FolderUp, X, ShieldCheck } from 'lucide-react';
 import { indexSong, deleteSong } from '../services/apiClient';
 import type { Song } from '../types/api';
 
@@ -20,6 +20,7 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [title, setTitle] = useState<string>('');
   const [artist, setArtist] = useState<string>('');
+  const [adminKey, setAdminKey] = useState<string>('');
   const [uploading, setUploading] = useState<boolean>(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -48,10 +49,15 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({
     e.preventDefault();
     if (!uploadFile || !title.trim() || !artist.trim()) return;
 
+    if (!adminKey.trim()) {
+      setUploadError('Admin API Key is required for administrative authorization.');
+      return;
+    }
+
     setUploading(true);
     setUploadError(null);
     try {
-      await indexSong(uploadFile, title.trim(), artist.trim());
+      await indexSong(uploadFile, title.trim(), artist.trim(), adminKey.trim());
       setShowUploadModal(false);
       setUploadFile(null);
       setTitle('');
@@ -65,12 +71,17 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({
   };
 
   const handleDelete = async (id: number, trackTitle: string) => {
-    if (!window.confirm(`Delete "${trackTitle}" and remove its constellation fingerprints from the database?`)) {
+    const enteredKey = window.prompt(
+      `Administrator Authorization Required:\nEnter Admin API Key to delete "${trackTitle}" and remove its constellation fingerprints from the database:`
+    );
+    if (enteredKey === null) return;
+    if (!enteredKey.trim()) {
+      alert('Admin API Key is required to authorize deletion.');
       return;
     }
     setDeletingId(id);
     try {
-      await deleteSong(id);
+      await deleteSong(id, enteredKey.trim());
       onRefresh();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Failed to delete track');
@@ -84,9 +95,15 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({
       {/* Top Header & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-            Music Library
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+              Music Library
+            </h1>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-full">
+              <ShieldCheck className="w-3 h-3 text-amber-600" />
+              <span>Admin Protected</span>
+            </span>
+          </div>
           <p className="text-sm text-gray-600 mt-1">
             Reference audio tracks indexed in PostgreSQL for acoustic constellation matching.
           </p>
@@ -305,6 +322,26 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({
                   onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                   className="w-full text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"
                 />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-gray-700">
+                    Admin API Key <span className="text-red-500">*</span>
+                  </label>
+                  <span className="text-[10px] text-amber-700 font-medium">AMBER_ADMIN_API_KEY</span>
+                </div>
+                <input
+                  type="password"
+                  required
+                  value={adminKey}
+                  onChange={(e) => setAdminKey(e.target.value)}
+                  placeholder="Enter administrator secret key"
+                  className="w-full px-3 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Required by server for authorization. Sent via X-Amber-Admin-Key and never stored in the browser.
+                </p>
               </div>
 
               {uploadError && (

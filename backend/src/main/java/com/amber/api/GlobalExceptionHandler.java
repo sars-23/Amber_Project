@@ -15,10 +15,35 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.time.Instant;
 import java.util.Map;
 
+import com.amber.security.AdminForbiddenException;
+import com.amber.security.AdminUnauthorizedException;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(AdminUnauthorizedException.class)
+    public ResponseEntity<Map<String, Object>> handleAdminUnauthorized(AdminUnauthorizedException ex) {
+        log.warn("Unauthorized administrative request: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                "status", HttpStatus.UNAUTHORIZED.value(),
+                "error", "Unauthorized",
+                "message", ex.getMessage(),
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    @ExceptionHandler(AdminForbiddenException.class)
+    public ResponseEntity<Map<String, Object>> handleAdminForbidden(AdminForbiddenException ex) {
+        log.warn("Forbidden administrative request: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                "status", HttpStatus.FORBIDDEN.value(),
+                "error", "Forbidden",
+                "message", ex.getMessage(),
+                "timestamp", Instant.now().toString()
+        ));
+    }
 
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNoResourceFound(NoResourceFoundException ex) {

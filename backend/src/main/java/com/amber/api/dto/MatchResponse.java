@@ -3,6 +3,8 @@ package com.amber.api.dto;
 import com.amber.matching.MatchResult;
 import com.amber.matching.OffsetHistogram;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 public record MatchResponse(
@@ -11,11 +13,21 @@ public record MatchResponse(
         int estimatedOffsetMs,
         double score,
         double confidence,
-        int matchingHashes,
+        @JsonProperty("matchingHashes") int matchingHashes,
         int totalQueryFingerprints,
-        double searchDurationMs,
+        @JsonProperty("searchDurationMs") double searchDurationMs,
         List<OffsetHistogram.HistogramBucket> offsetHistogram
 ) {
+    @JsonProperty("matchedFingerprints")
+    public int matchedFingerprints() {
+        return matchingHashes;
+    }
+
+    @JsonProperty("processingTimeMs")
+    public double processingTimeMs() {
+        return searchDurationMs;
+    }
+
     public static MatchResponse from(MatchResult result) {
         return new MatchResponse(
                 result.matched(),

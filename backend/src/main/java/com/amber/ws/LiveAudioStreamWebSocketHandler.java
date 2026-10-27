@@ -42,8 +42,15 @@ public class LiveAudioStreamWebSocketHandler extends AbstractWebSocketHandler {
         this.objectMapper = objectMapper;
     }
 
+    public static final int MAX_CONCURRENT_SESSIONS = 50;
+
     @Override
-    public void afterConnectionEstablished(WebSocketSession session) {
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        if (sessions.size() >= MAX_CONCURRENT_SESSIONS) {
+            log.warn("WebSocket connection rejected: reached maximum concurrent session limit ({})", MAX_CONCURRENT_SESSIONS);
+            session.close(new CloseStatus(CloseStatus.POLICY_VIOLATION.getCode(), "Server concurrent session limit reached"));
+            return;
+        }
         log.info("WebSocket audio stream session established: {}", session.getId());
         sessions.put(session.getId(), new SessionAudioBuffer(WINDOW_SAMPLES));
     }
@@ -78,8 +85,10 @@ public class LiveAudioStreamWebSocketHandler extends AbstractWebSocketHandler {
             response.put("confidence", matchResult.confidence());
             response.put("estimatedOffsetMs", matchResult.estimatedOffsetMs());
             response.put("matchedFingerprints", matchResult.matchingHashes());
+            response.put("matchingHashes", matchResult.matchingHashes());
             response.put("totalQueryFingerprints", matchResult.totalQueryFingerprints());
             response.put("processingTimeMs", matchResult.searchDurationMs());
+            response.put("searchDurationMs", matchResult.searchDurationMs());
 
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
         }

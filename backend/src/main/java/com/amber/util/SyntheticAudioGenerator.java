@@ -5,7 +5,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 
 /**
- * Utility for generating deterministic synthetic PCM and WAV audio fixtures for tests.
+ * Utility for generating deterministic synthetic PCM and WAV audio fixtures.
  */
 public final class SyntheticAudioGenerator {
 
@@ -58,7 +58,6 @@ public final class SyntheticAudioGenerator {
         for (int noteIdx = 0; noteIdx < noteFrequenciesHz.length; noteIdx++) {
             double rootFreq = noteFrequenciesHz[noteIdx];
             int noteStart = noteIdx * samplesPerNote;
-            // Generate root + major third (1.25x) + fifth (1.5x) for a rich musical chord
             double f1 = rootFreq;
             double f2 = rootFreq * 1.25;
             double f3 = rootFreq * 1.5;
@@ -66,7 +65,6 @@ public final class SyntheticAudioGenerator {
             for (int i = 0; i < samplesPerNote; i++) {
                 double time = (double) i / sampleRate;
                 double noteTime = (double) i / samplesPerNote;
-                // Mild natural decay
                 double env = 0.5 + 0.5 * Math.exp(-1.5 * noteTime);
 
                 double v1 = Math.sin(2.0 * Math.PI * f1 * time);
@@ -102,8 +100,8 @@ public final class SyntheticAudioGenerator {
         dos.writeShort(Short.reverseBytes((short) 1)); // AudioFormat (1 = PCM)
         dos.writeShort(Short.reverseBytes((short) 1)); // NumChannels (1 = Mono)
         dos.writeInt(Integer.reverseBytes(sampleRate)); // SampleRate
-        dos.writeInt(Integer.reverseBytes(sampleRate * 2)); // ByteRate (SampleRate * NumChannels * BitsPerSample/8)
-        dos.writeShort(Short.reverseBytes((short) 2)); // BlockAlign (NumChannels * BitsPerSample/8)
+        dos.writeInt(Integer.reverseBytes(sampleRate * 2)); // ByteRate
+        dos.writeShort(Short.reverseBytes((short) 2)); // BlockAlign
         dos.writeShort(Short.reverseBytes((short) 16)); // BitsPerSample
 
         // "data" sub-chunk

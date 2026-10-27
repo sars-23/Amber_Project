@@ -22,7 +22,8 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
   } = result;
 
   // Format offset in minutes:seconds.centiseconds
-  const formatOffset = (ms: number) => {
+  const formatOffset = (ms?: number) => {
+    if (typeof ms !== 'number' || isNaN(ms)) return '0:00.0s';
     const isNegative = ms < 0;
     const absMs = Math.abs(ms);
     const totalSecs = Math.floor(absMs / 1000);
@@ -32,10 +33,25 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
     return `${isNegative ? '-' : ''}${minutes}:${seconds.toString().padStart(2, '0')}.${Math.floor(millis / 100)}s`;
   };
 
-  // Prepare histogram buckets for visual inspection
+  // Safe timing & confidence calculations
+  const rawLatency = processingTimeMs ?? result.searchDurationMs;
+  const latencyDisplay = typeof rawLatency === 'number' && !isNaN(rawLatency) ? `${rawLatency.toFixed(1)} ms` : '—';
+
+  const safeConfidence = typeof confidence === 'number' && !isNaN(confidence) ? confidence : 0;
+  const confidencePercent = `${(safeConfidence * 100).toFixed(1)}%`;
+
+  const effectiveMatchedHashes = matchedFingerprints ?? result.matchingHashes ?? 0;
+  const effectiveTotalQueryFPs = totalQueryFingerprints ?? 0;
+  const effectiveOffset = estimatedOffsetMs ?? 0;
+
+  // Prepare histogram buckets from either diagnostics.histogram or result.offsetHistogram
   const histogramEntries = diagnostics?.histogram
     ? Object.entries(diagnostics.histogram)
         .map(([k, v]) => ({ bucket: Number(k), votes: v }))
+        .sort((a, b) => a.bucket - b.bucket)
+    : Array.isArray(result.offsetHistogram)
+    ? result.offsetHistogram
+        .map((b) => ({ bucket: b.offsetMs, votes: b.votes }))
         .sort((a, b) => a.bucket - b.bucket)
     : [];
 
@@ -54,7 +70,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
                 No Confident Match Found
               </h3>
               <span className="text-xs font-mono font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
-                {(confidence * 100).toFixed(1)}% confidence
+                {confidencePercent} confidence
               </span>
             </div>
             <p className="text-sm text-gray-600 mt-1">
@@ -99,13 +115,13 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
         <div className="flex sm:flex-col items-center sm:items-end justify-between">
           <span className="text-xs text-gray-500 mb-0.5 sm:block">Match Confidence</span>
           <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-mono font-semibold ${
-            confidence >= 0.7
+            safeConfidence >= 0.7
               ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-              : confidence >= 0.4
+              : safeConfidence >= 0.4
               ? 'bg-amber-50 text-amber-800 border border-amber-200'
               : 'bg-gray-100 text-gray-700'
           }`}>
-            {(confidence * 100).toFixed(1)}% match
+            {confidencePercent} match
           </span>
         </div>
       </div>
@@ -118,7 +134,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
             <span>Offset</span>
           </div>
           <div className="text-sm font-semibold font-mono text-gray-900">
-            {formatOffset(estimatedOffsetMs)}
+            {formatOffset(effectiveOffset)}
           </div>
           <div className="text-[11px] text-gray-500 mt-0.5">Position in song</div>
         </div>
@@ -129,7 +145,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
             <span>Matched Hashes</span>
           </div>
           <div className="text-sm font-semibold font-mono text-gray-900">
-            {matchedFingerprints} <span className="text-xs text-gray-500">/ {totalQueryFingerprints}</span>
+            {effectiveMatchedHashes} <span className="text-xs text-gray-500">/ {effectiveTotalQueryFPs}</span>
           </div>
           <div className="text-[11px] text-gray-500 mt-0.5">Constellation pairs</div>
         </div>
@@ -140,7 +156,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
             <span>Peak Votes</span>
           </div>
           <div className="text-sm font-semibold font-mono text-gray-900">
-            {diagnostics?.peakVotes ?? matchedFingerprints}
+            {diagnostics?.peakVotes ?? effectiveMatchedHashes}
           </div>
           <div className="text-[11px] text-gray-500 mt-0.5">Coherent offset bin</div>
         </div>
@@ -151,9 +167,9 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
             <span>Search Latency</span>
           </div>
           <div className="text-sm font-semibold font-mono text-gray-900">
-            {processingTimeMs.toFixed(1)} ms
+            {latencyDisplay}
           </div>
-          <div className="text-[11px] text-gray-500 mt-0.5">PostgreSQL lookup</div>
+          <div className="text-[11px] text-gray-500 mt-0.5">Lookup duration</div>
         </div>
       </div>
 
@@ -177,7 +193,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
               <div className="flex items-center justify-between mb-3 text-xs">
                 <span className="font-medium text-gray-700">Offset Histogram (Δt = t_catalog − t_query)</span>
                 <span className="font-mono text-gray-500">
-                  Coherence Score: {diagnostics?.coherenceScore?.toFixed(2) ?? '—'}
+                  Coherence Score: {typeof diagnostics?.coherenceScore === 'number' && !isNaN(diagnostics.coherenceScore) ? diagnostics.coherenceScore.toFixed(2) : (typeof (result as any).score === 'number' ? (result as any).score.toFixed(2) : '—')}
                 </span>
               </div>
 
@@ -211,7 +227,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
 
               <div className="flex justify-between text-[11px] text-gray-500 font-mono mt-1 px-1">
                 <span>{histogramEntries[0]?.bucket}ms</span>
-                <span className="text-amber-700 font-medium">Peak bucket: {diagnostics?.peakOffsetBucketMs}ms</span>
+                <span className="text-amber-700 font-medium">Peak bucket: {diagnostics?.peakOffsetBucketMs ?? effectiveOffset}ms</span>
                 <span>{histogramEntries[histogramEntries.length - 1]?.bucket}ms</span>
               </div>
             </div>

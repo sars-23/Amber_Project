@@ -18,3 +18,7 @@ amber:
   dsp:
     fft-size: 1024
     hop-size: 512
+  admin:
+    api-key: test-admin-secret-key
+  proxy:
+    behind-proxy: true

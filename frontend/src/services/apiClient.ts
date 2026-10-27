@@ -45,35 +45,71 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return res.json();
 }
 
-export async function fetchSongs(limit: number = 50, offset: number = 0): Promise<Song[]> {
-  const res = await fetch(`${API_BASE}/songs?limit=${limit}&offset=${offset}`);
+export async function fetchSongs(pageOrLimit: number = 0, sizeOrOffset: number = 50): Promise<Song[]> {
+  // Support both (page, size) and legacy (limit, offset)
+  let page = pageOrLimit;
+  let size = sizeOrOffset;
+  if (pageOrLimit > 10 && sizeOrOffset === 0) {
+    size = pageOrLimit;
+    page = 0;
+  }
+  const offset = page * size;
+  const res = await fetch(`${API_BASE}/songs?page=${page}&size=${size}&limit=${size}&offset=${offset}`);
   if (!res.ok) throw new Error(`Failed to fetch songs: ${res.statusText}`);
-  return res.json();
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.content || [];
 }
 
-export async function indexSong(file: File, title: string, artist: string): Promise<Song> {
+export async function indexSong(file: File, title: string, artist: string, adminKey?: string): Promise<Song> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('title', title);
   formData.append('artist', artist);
 
+  const headers: Record<string, string> = {};
+  if (adminKey && adminKey.trim()) {
+    headers['X-Amber-Admin-Key'] = adminKey.trim();
+  }
+
   const res = await fetch(`${API_BASE}/songs`, {
     method: 'POST',
+    headers,
     body: formData,
   });
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      throw new Error('Administrative authentication required. Please provide a valid Admin API Key.');
+    }
+    if (res.status === 403) {
+      throw new Error(errorData.message || 'Forbidden: Invalid administrative credentials or indexing is disabled on the server.');
+    }
     throw new Error(errorData.message || `Failed to index song: ${res.statusText}`);
   }
   return res.json();
 }
 
-export async function deleteSong(id: number): Promise<void> {
+export async function deleteSong(id: number, adminKey?: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (adminKey && adminKey.trim()) {
+    headers['X-Amber-Admin-Key'] = adminKey.trim();
+  }
+
   const res = await fetch(`${API_BASE}/songs/${id}`, {
     method: 'DELETE',
+    headers,
   });
-  if (!res.ok) throw new Error(`Failed to delete song: ${res.statusText}`);
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      throw new Error('Administrative authentication required. Please provide a valid Admin API Key to delete tracks.');
+    }
+    if (res.status === 403) {
+      throw new Error(errorData.message || 'Forbidden: Invalid administrative credentials or deletion is disabled on the server.');
+    }
+    throw new Error(errorData.message || `Failed to delete song: ${res.statusText}`);
+  }
 }
 
 export async function searchAudio(fileOrBlob: Blob | File): Promise<MatchResponse> {
@@ -88,6 +124,32 @@ export async function searchAudio(fileOrBlob: Blob | File): Promise<MatchRespons
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.message || `Search request failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function runBenchmark(
+  fileOrBlob?: Blob | File | null,
+  snrDb: number = 20.0,
+  offsetSecs: number = 2.0,
+  durationSecs: number = 4.0
+): Promise<import('../types/api').BenchmarkResponse> {
+  const formData = new FormData();
+  if (fileOrBlob) {
+    formData.append('file', fileOrBlob, fileOrBlob instanceof File ? fileOrBlob.name : 'reference.wav');
+  }
+  formData.append('snrDb', snrDb.toString());
+  formData.append('offsetSecs', offsetSecs.toString());
+  formData.append('durationSecs', durationSecs.toString());
+
+  const res = await fetch(`${API_BASE}/benchmark/robustness`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.message || `Benchmark execution failed: ${res.statusText}`);
   }
   return res.json();
 }

@@ -40,6 +40,7 @@ export const BulkImporter: React.FC<BulkImporterProps> = ({
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [skipDuplicates, setSkipDuplicates] = useState<boolean>(true);
   const [concurrency, setConcurrency] = useState<number>(1);
+  const [adminKey, setAdminKey] = useState<string>('');
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [currentProcessingName, setCurrentProcessingName] = useState<string | null>(null);
 
@@ -234,7 +235,7 @@ export const BulkImporter: React.FC<BulkImporterProps> = ({
     );
   };
 
-  const processItem = async (item: BulkImportItem): Promise<void> => {
+  const processItem = async (item: BulkImportItem, key: string): Promise<void> => {
     setCurrentProcessingName(item.filename);
 
     setItems((prev) =>
@@ -242,7 +243,7 @@ export const BulkImporter: React.FC<BulkImporterProps> = ({
     );
 
     try {
-      const response = await indexSong(item.file, item.title.trim(), item.artist.trim());
+      const response = await indexSong(item.file, item.title.trim(), item.artist.trim(), key);
 
       setItems((prev) =>
         prev.map((i) =>
@@ -278,6 +279,20 @@ export const BulkImporter: React.FC<BulkImporterProps> = ({
   };
 
   const startImport = async () => {
+    let effectiveKey = adminKey.trim();
+    if (!effectiveKey) {
+      const entered = window.prompt(
+        'Administrator Authorization Required:\nEnter Admin API Key to import audio tracks into the database:'
+      );
+      if (entered === null) return;
+      if (!entered.trim()) {
+        alert('Admin API Key is required to import tracks.');
+        return;
+      }
+      effectiveKey = entered.trim();
+      setAdminKey(effectiveKey);
+    }
+
     cancelRequestedRef.current = false;
     pauseRequestedRef.current = false;
     setIsRunning(true);
@@ -324,7 +339,7 @@ export const BulkImporter: React.FC<BulkImporterProps> = ({
       if (cancelRequestedRef.current) break;
 
       const batch = toProcess.splice(0, concurrency);
-      await Promise.all(batch.map((item) => processItem(item)));
+      await Promise.all(batch.map((item) => processItem(item, effectiveKey)));
     }
 
     setIsRunning(false);
@@ -544,6 +559,19 @@ export const BulkImporter: React.FC<BulkImporterProps> = ({
                   <option value={1}>1 (Sequential)</option>
                   <option value={2}>2 (Concurrent)</option>
                 </select>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs text-gray-600 pl-3 border-l border-gray-200">
+                <span className="font-medium text-gray-700">Admin Key:</span>
+                <input
+                  type="password"
+                  value={adminKey}
+                  onChange={(e) => setAdminKey(e.target.value)}
+                  disabled={isRunning}
+                  placeholder="AMBER_ADMIN_API_KEY"
+                  className="text-xs px-2 py-0.5 border border-gray-300 rounded bg-white w-36 focus:ring-1 focus:ring-amber-500"
+                  title="Server administrative key required for indexing tracks"
+                />
               </div>
             </div>
 

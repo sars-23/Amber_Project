@@ -60,6 +60,7 @@ class ApiControllerIntegrationTest {
 
         mockMvc.perform(multipart("/api/v1/songs")
                         .file(file)
+                        .header("X-Amber-Admin-Key", "test-admin-secret-key")
                         .param("title", "REST Symphony")
                         .param("artist", "Spring Composer"))
                 .andExpect(status().isCreated())
