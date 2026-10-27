@@ -2,7 +2,7 @@
 
 ## Project Metadata
 - **Project**: Amber (Acoustic Fingerprinting & Real-Time Audio Search Engine)
-- **Target Branch**: `main` (or `feat/Amber-build`)
+- **Target Branch**: `main`
 - **Backend**: Java 21, Spring Boot 3.3.x, Spring JDBC, Flyway, Testcontainers
 - **Frontend**: React 19 / Vite 5, TypeScript 6, Tailwind CSS, Web Audio API, WebSocket
 - **Database**: PostgreSQL 16
@@ -15,7 +15,7 @@
 - [x] **Phase 0 — Workspace, Architecture, and Repository Setup**
   - Git initialized, `.gitignore`, `.env.example`, `compose.yaml`, architecture docs established.
   - Toolchain verified: Java 21, Maven 3.9.9, Node v24, npm 11, FFmpeg verified.
-  - Remote status: Verified & synchronized with GitHub private repository `sars-23/Amber` on branch `main`.
+  - Remote status: Verified & synchronized with GitHub repository `sars-23/Amber_Project` on branch `main`.
 - [x] **Phase 1 — Audio Ingestion and Normalization**
   - PCM representation (16-bit mono @ 11,025 Hz).
   - FFmpeg integration and validation tests (10 tests passing).
