@@ -4,7 +4,7 @@
 - **Project**: Amber (Acoustic Fingerprinting & Real-Time Audio Search Engine)
 - **Target Branch**: `main` (or `feat/Amber-build`)
 - **Backend**: Java 21, Spring Boot 3.3.x, Spring JDBC, Flyway, Testcontainers
-- **Frontend**: React 18 / Vite, TypeScript, Tailwind CSS, Web Audio API, WebSocket
+- **Frontend**: React 19 / Vite 5, TypeScript 6, Tailwind CSS, Web Audio API, WebSocket
 - **Database**: PostgreSQL 16
 - **DSP Engine**: Custom Radix-2 Cooley–Tukey FFT, Hann Windowing, Constellation Hashing, Offset Histogram Matching
 

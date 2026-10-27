@@ -8,7 +8,7 @@ This guide details the complete production architecture, deployment configuratio
 
 Amber is deployed as a distributed web application across cloud providers:
 
-- **Frontend Application**: [Render Static Site](https://amber-frontend-w78m.onrender.com) (React 18 / TypeScript / Vite / Tailwind CSS).
+- **Frontend Application**: [Render Static Site](https://amber-frontend-w78m.onrender.com) (React 19 / TypeScript 6 / Vite 5 / Tailwind CSS 3.4).
 - **Backend Service**: [Render Web Service](https://amber-backend-ler4.onrender.com) (Docker container running Eclipse Temurin Java 21 LTS, Spring Boot 3.3, and Alpine FFmpeg).
 - **Database Engine**: [Neon Serverless PostgreSQL](https://neon.tech) (PostgreSQL 16 with SSL encryption and versioned Flyway migrations).
 - **Repository & CI**: GitHub (`sars-23/Amber_Project` on branch `main`), with automated build and test quality gates via GitHub Actions.
@@ -93,7 +93,7 @@ Sensitive credentials (`sync: false`) are configured privately in the **Render D
 | `SPRING_DATASOURCE_USERNAME` | `amber-backend` | Database user account | Set in Render Dashboard (`sync: false`). |
 | `SPRING_DATASOURCE_PASSWORD` | `amber-backend` | Database user password | Set in Render Dashboard (`sync: false`). |
 | `AMBER_ADMIN_API_KEY` | `amber-backend` | Secret token authorizing `POST /api/v1/songs` and `DELETE /api/v1/songs/{id}` | Set in Render Dashboard (`sync: false`). Backend fails closed if missing. Never expose in frontend bundles. |
-| `CORS_ALLOWED_ORIGINS` | `amber-backend` | Allowed browser origins for CORS preflight | Defined in `render.yaml`. Includes `https://*.onrender.com` and localhost. |
+| `CORS_ALLOWED_ORIGINS` | `amber-backend` | Allowed browser origins for CORS preflight | Defined in `render.yaml`. Includes `https://*.onrender.com`, `https://*.vercel.app` (retained in deployed configuration), and localhost. |
 | `VITE_API_BASE_URL` | `amber-frontend` | Base HTTP endpoint for REST communication | `https://amber-backend-ler4.onrender.com/api/v1` |
 | `VITE_WS_URL` | `amber-frontend` | WebSocket endpoint for real-time microphone stream | `wss://amber-backend-ler4.onrender.com/api/v1/ws/audio-stream` |
 

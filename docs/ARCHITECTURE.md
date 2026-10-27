@@ -67,4 +67,4 @@ graph TD
 7. **Noise Lab Benchmark (`com.amber.benchmark`)**:
    - `RobustnessBenchmarkService`: In-memory isolated benchmark evaluating acoustic degradation under additive white Gaussian noise without database mutations.
 8. **Frontend Experience (`frontend/src`)**:
-   - React 18, TypeScript, Vite, Tailwind CSS, AudioWorklet linear downsampling, live HTML5 canvas oscilloscope, and Noise Lab benchmark dashboard.
+   - React 19, TypeScript 6, Vite 5, Tailwind CSS 3.4, AudioWorklet linear downsampling, live HTML5 canvas oscilloscope, and Noise Lab benchmark dashboard.

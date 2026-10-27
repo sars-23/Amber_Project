@@ -5,8 +5,8 @@
 [![Java 21 LTS](https://img.shields.io/badge/Java-21%20LTS-orange.svg)](https://adoptium.net/)
 [![Spring Boot 3.3](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
-[![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://react.dev/)
-[![TypeScript 5](https://img.shields.io/badge/TypeScript-5-3178C6.svg)](https://www.typescriptlang.org/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![TypeScript 6](https://img.shields.io/badge/TypeScript-6-3178C6.svg)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-5-646CFF.svg)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg)](https://tailwindcss.com/)
 
@@ -29,7 +29,7 @@ Instead of delegating to third-party recognition APIs or external math libraries
 | Reference Music Library | Audio File Drag-and-Drop Search |
 | :---: | :---: |
 | ![Reference Music Library](docs/assets/music_library_catalog.png) | ![Audio File Drag-and-Drop Search](docs/assets/file_audio_search.png) |
-| *B-tree indexed constellation catalog with admin-key authorization* | *Sub-50ms candidate retrieval and time-offset alignment* |
+| *B-tree indexed constellation catalog with admin-key authorization* | *Low-latency candidate retrieval and time-offset alignment (7–17ms measured)* |
 
 ---
 
@@ -110,7 +110,7 @@ True matches cluster into a coherent time-offset bucket ($\Delta t_{\text{offset
 | **Backend Core** | Java 21 LTS, Spring Boot 3.3, Spring Web, Spring WebSocket, Spring JDBC |
 | **Audio & Math** | Pure Java Radix-2 FFT, Hann Windowing, Alpine FFmpeg (Docker decoder) |
 | **Persistence** | PostgreSQL 16 (Neon Serverless), Flyway Database Migrations, HikariCP |
-| **Frontend Core** | React 18, TypeScript 5, Vite 5, Tailwind CSS 3.4, Lucide Icons |
+| **Frontend Core** | React 19, TypeScript 6, Vite 5, Tailwind CSS 3.4, Lucide Icons |
 | **Browser Audio** | Web Audio API, native `AudioWorklet` processor, HTML5 Canvas oscilloscope |
 | **DevOps & Cloud** | Docker multi-stage builds, Render (Web Service & Static Site), GitHub Actions CI |
 
