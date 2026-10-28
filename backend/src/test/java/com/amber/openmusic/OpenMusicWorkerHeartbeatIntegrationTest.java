@@ -239,8 +239,8 @@ class OpenMusicWorkerHeartbeatIntegrationTest {
         assertEquals("RUNNING", jobStatus);
 
         // Now simulate the passage of time so the lease expires naturally
-        jdbc.update("UPDATE open_music_import_items SET lease_until = ?",
-                java.sql.Timestamp.from(Instant.now().minus(Duration.ofMinutes(1))));
+        jdbc.update("UPDATE open_music_import_items SET lease_until = ? WHERE id = ?",
+                java.sql.Timestamp.from(Instant.now().minus(Duration.ofMinutes(1))), item.id());
 
         // Stale recovery safely reclaims the abandoned item back to PENDING
         int recovered = repository.recoverStaleProcessing(Duration.ofMillis(10));
