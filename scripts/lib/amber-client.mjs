@@ -2,6 +2,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
+ * Custom error class for ambiguous upload failures.
+ * Thrown when an upload request fails after bytes were sent and the server's outcome is uncertain.
+ */
+export class AmbiguousUploadError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = 'AmbiguousUploadError';
+    this.isAmbiguous = true;
+    this.cause = cause;
+  }
+}
+
+/**
  * Client for interacting with the Amber REST API.
  * Encapsulates authentication, secret redaction, pagination, and retry logic.
  */
@@ -11,7 +24,7 @@ export class AmberClient {
    * @param {string} [options.apiUrl] - Base API URL (e.g. http://localhost:8080/api/v1)
    * @param {string} [options.adminApiKey] - Administrative secret token
    * @param {number} [options.timeoutMs=30000] - Request timeout in milliseconds
-   * @param {number} [options.maxRetries=3] - Maximum retry attempts for transient errors
+   * @param {number} [options.maxRetries=3] - Maximum retry attempts for safe transient read errors
    * @param {typeof fetch} [options.customFetch] - Optional fetch implementation for testing
    */
   constructor(options = {}) {
@@ -37,14 +50,14 @@ export class AmberClient {
   }
 
   /**
-   * Checks backend health status.
+   * Checks backend health status. Safe read with bounded retries.
    *
    * @returns {Promise<{ status: string, database?: string, version?: string }>}
    */
   async getHealth() {
     const res = await this._fetchWithRetry(`${this.apiUrl}/health`, {
       method: 'GET'
-    });
+    }, { allowRetryOnTransient: true });
     if (!res.ok) {
       throw new Error(`Health check failed with HTTP ${res.status}: ${res.statusText}`);
     }
@@ -52,7 +65,7 @@ export class AmberClient {
   }
 
   /**
-   * Fetches the entire existing catalogue using pagination.
+   * Fetches the entire existing catalogue using pagination. Safe read with bounded retries.
    *
    * @returns {Promise<Array<{ id: number, title: string, artist: string, durationMs: number, fingerprintCount: number }>>}
    */
@@ -64,7 +77,7 @@ export class AmberClient {
 
     while (hasMore) {
       const url = `${this.apiUrl}/songs?page=${page}&size=${pageSize}`;
-      const res = await this._fetchWithRetry(url, { method: 'GET' });
+      const res = await this._fetchWithRetry(url, { method: 'GET' }, { allowRetryOnTransient: true });
 
       if (!res.ok) {
         const bodyText = await res.text();
@@ -91,6 +104,10 @@ export class AmberClient {
   /**
    * Uploads and indexes a single audio track.
    *
+   * IMPORTANT: Catalogue writes are NOT idempotent and DO NOT support server idempotency keys.
+   * Automatic retries for transient errors or network timeouts are strictly disabled.
+   * If a timeout, network failure, or 5xx occurs, an AmbiguousUploadError is thrown.
+   *
    * @param {string} filePath - Absolute or resolved path to local audio file
    * @param {string} title - Song title
    * @param {string} artist - Song artist
@@ -115,11 +132,12 @@ export class AmberClient {
       'Authorization': `Bearer ${this.adminApiKey}`
     };
 
+    // Catalogue write: transient retry disabled to prevent duplicate uploads
     const res = await this._fetchWithRetry(`${this.apiUrl}/songs`, {
       method: 'POST',
       headers,
       body: formData
-    });
+    }, { allowRetryOnTransient: false });
 
     if (res.status === 201) {
       return res.json();
@@ -145,7 +163,7 @@ export class AmberClient {
   }
 
   /**
-   * Submits an audio query to POST /api/v1/search and records latency.
+   * Submits an audio query to POST /api/v1/search and records latency. Safe recognition read with bounded retries.
    *
    * @param {string} filePath - Path to audio query excerpt
    * @returns {Promise<{ result: Object, latencyMs: number }>}
@@ -162,7 +180,7 @@ export class AmberClient {
     const res = await this._fetchWithRetry(`${this.apiUrl}/search`, {
       method: 'POST',
       body: formData
-    });
+    }, { allowRetryOnTransient: true });
     const latencyMs = Math.round(performance.now() - startTime);
 
     if (!res.ok) {
@@ -175,14 +193,20 @@ export class AmberClient {
   }
 
   /**
-   * Internal fetch wrapper supporting exponential backoff, rate limits (429), and timeout.
+   * Internal fetch wrapper supporting bounded backoff, rate limits (429), and timeout handling.
    *
    * @private
+   * @param {string} url
+   * @param {RequestInit} options
+   * @param {Object} [retryConfig]
+   * @param {boolean} [retryConfig.allowRetryOnTransient=true] - If false, halts on first 5xx or network timeout
    */
-  async _fetchWithRetry(url, options) {
+  async _fetchWithRetry(url, options, retryConfig = {}) {
+    const allowRetryOnTransient = retryConfig.allowRetryOnTransient !== false;
     let attempt = 0;
+    const maxRetries = allowRetryOnTransient ? this.maxRetries : 0;
 
-    while (attempt <= this.maxRetries) {
+    while (true) {
       attempt++;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -194,7 +218,7 @@ export class AmberClient {
         });
         clearTimeout(timeoutId);
 
-        // Handle rate limiting (429)
+        // Handle rate limiting (429) - respects Retry-After
         if (response.status === 429 && attempt <= this.maxRetries) {
           const retryAfterHeader = response.headers?.get ? response.headers.get('Retry-After') : null;
           let delayMs = 2000;
@@ -208,31 +232,53 @@ export class AmberClient {
           continue;
         }
 
-        // Retry transient server errors (500, 502, 503, 504)
-        if ([500, 502, 503, 504].includes(response.status) && attempt <= this.maxRetries) {
-          const backoff = calculateBackoff(attempt);
-          await sleep(backoff);
-          continue;
+        // Retry transient server errors (500, 502, 503, 504) ONLY when explicitly safe
+        if ([500, 502, 503, 504].includes(response.status)) {
+          if (allowRetryOnTransient && attempt <= maxRetries) {
+            const backoff = calculateBackoff(attempt);
+            await sleep(backoff);
+            continue;
+          }
+          if (!allowRetryOnTransient) {
+            const bodyText = await response.text().catch(() => '');
+            const cleanErr = this.redact(bodyText);
+            throw new AmbiguousUploadError(
+              this.redact(`Upload failed with server error HTTP ${response.status}: ${cleanErr || 'Internal Server Error'}. Request was sent but outcome is ambiguous without an idempotency key.`),
+              response
+            );
+          }
         }
 
         return response;
       } catch (err) {
         clearTimeout(timeoutId);
+        if (err instanceof AmbiguousUploadError) {
+          throw err;
+        }
+
         const isAbort = err.name === 'AbortError';
         const isNetwork = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED' || err.message?.includes('fetch failed');
 
-        if ((isAbort || isNetwork) && attempt <= this.maxRetries) {
+        if (allowRetryOnTransient && (isAbort || isNetwork) && attempt <= maxRetries) {
           const backoff = calculateBackoff(attempt);
           await sleep(backoff);
           continue;
+        }
+
+        if (!allowRetryOnTransient && (isAbort || isNetwork)) {
+          const msg = isAbort
+            ? `Upload timed out after ${this.timeoutMs}ms while waiting for server response.`
+            : `Upload connection failed (${err.message}).`;
+          throw new AmbiguousUploadError(
+            this.redact(`${msg} Because Amber does not provide an idempotency key, server processing outcome is uncertain.`),
+            err
+          );
         }
 
         const msg = isAbort ? `Request timed out after ${this.timeoutMs}ms` : err.message;
         throw new Error(this.redact(msg));
       }
     }
-
-    throw new Error(this.redact(`Failed after ${this.maxRetries} retry attempts: ${url}`));
   }
 }
 

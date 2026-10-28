@@ -8,6 +8,7 @@
  *
  * Defaults to safe Dry Run mode unless --execute is explicitly passed.
  * Fails closed if catalogue duplicate check cannot be verified.
+ * Halts on ambiguous upload outcomes to prevent duplicate ingestion.
  */
 
 import fs from 'node:fs';
@@ -20,7 +21,7 @@ import {
   validateLicensing,
   normalizeTrackKey
 } from './lib/audio-validator.mjs';
-import { AmberClient } from './lib/amber-client.mjs';
+import { AmberClient, AmbiguousUploadError } from './lib/amber-client.mjs';
 
 const REQUIRED_COLUMNS = ['relative_path', 'title', 'artist', 'license', 'source_url'];
 
@@ -137,7 +138,7 @@ export async function runBulkImport(cliArgs = process.argv.slice(2), testOverrid
 
   console.log(`Parsed ${rows.length} track entry(s) from manifest.`);
 
-  // 2. Fetch existing catalogue for duplicate detection (FAIL-CLOSED SAFETY)
+  // 2. Fetch existing catalogue for duplicate detection and resume reconciliation
   console.log('Querying current Amber catalogue for existing tracks...');
   const catalogueMap = new Map();
   let catalogueFetchError = null;
@@ -181,20 +182,36 @@ export async function runBulkImport(cliArgs = process.argv.slice(2), testOverrid
     return { exitCode: 1, error: failureExplanation, report: abortReport };
   }
 
-  // 3. Load previous report if resuming
+  // 3. Load previous report if resuming and reconcile ambiguous tracks
   const previousResults = new Map();
   if (isResume && fs.existsSync(reportPath)) {
     try {
       const prevData = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
       if (Array.isArray(prevData.results)) {
         for (const item of prevData.results) {
+          const trackKey = normalizeTrackKey(item.title, item.artist);
+          const compositeKey = `${item.relativePath}::${trackKey}`;
+
           if (item.status === 'SUCCESS' || item.status === 'SKIPPED') {
-            const trackKey = normalizeTrackKey(item.title, item.artist);
-            const compositeKey = `${item.relativePath}::${trackKey}`;
             previousResults.set(compositeKey, item);
+          } else if (item.status === 'AMBIGUOUS') {
+            // Reconcile uncertain track against current database catalogue
+            if (catalogueMap.has(trackKey)) {
+              const existing = catalogueMap.get(trackKey);
+              previousResults.set(compositeKey, {
+                ...item,
+                status: 'SUCCESS',
+                songId: existing.id,
+                fingerprintCount: existing.fingerprintCount,
+                reason: `Reconciled from catalogue: verified indexed with ID ${existing.id}`
+              });
+              console.log(`[Reconciliation] Ambiguous track "${item.title}" verified in catalogue (ID: ${existing.id}). Marking as completed.`);
+            } else {
+              console.log(`[Reconciliation] Ambiguous track "${item.title}" was NOT found in catalogue. Re-queuing for safe ingestion.`);
+            }
           }
         }
-        console.log(`Resuming from existing report: ${previousResults.size} item(s) already completed.`);
+        console.log(`Resuming from existing report: ${previousResults.size} item(s) reconciled or completed.`);
       }
     } catch (err) {
       console.warn(`Could not parse previous report for resume: ${err.message}. Starting fresh.`);
@@ -387,7 +404,7 @@ export async function runBulkImport(cliArgs = process.argv.slice(2), testOverrid
   }
   console.log(`- Invalid Entries        : ${invalidItems.length}`);
   if (previousDone.length > 0) {
-    console.log(`- Resumed (Completed)    : ${previousDone.length}`);
+    console.log(`- Resumed / Reconciled   : ${previousDone.length}`);
   }
 
   if (invalidItems.length > 0) {
@@ -452,6 +469,7 @@ export async function runBulkImport(cliArgs = process.argv.slice(2), testOverrid
 
   let successCount = 0;
   let failCount = 0;
+  let pausedForAmbiguity = false;
 
   for (let idx = 0; idx < plan.length; idx++) {
     const item = plan[idx];
@@ -473,15 +491,48 @@ export async function runBulkImport(cliArgs = process.argv.slice(2), testOverrid
       successCount++;
       console.log(`✓ OK (ID: ${response.id}, ${response.fingerprintCount} fingerprints, ${(response.durationMs / 1000).toFixed(1)}s)`);
     } catch (err) {
-      item.status = 'FAILED';
-      item.error = client.redact(err.message);
-      item.reason = `Upload failed: ${item.error}`;
       failCount++;
-      console.log(`✗ FAILED: ${item.error}`);
+      const isAmbiguous = Boolean(err.isAmbiguous);
+      item.error = client.redact(err.message);
 
-      if (err.message?.includes('timed out') || err.name === 'AbortError') {
-        console.warn('  [Notice] Upload request timed out. Outcome is uncertain as API lacks idempotency keys.');
+      if (isAmbiguous) {
+        item.status = 'AMBIGUOUS';
+        item.reason = `Upload outcome ambiguous: ${item.error}. Ingestion halted to prevent duplicate uploads.`;
+        pausedForAmbiguity = true;
+        console.log(`\n⚠ AMBIGUOUS UPLOAD: ${item.error}`);
+        console.error(`Halting further ingestion. Outcome for track "${item.title}" by "${item.artist}" cannot be verified without reconciliation.`);
+
+        // Save report immediately with AMBIGUOUS status
+        saveReport(reportPath, {
+          timestamp: new Date().toISOString(),
+          mode: 'execute',
+          apiUrl,
+          audioDir: path.resolve(audioDir),
+          manifestPath: path.resolve(manifestPath),
+          catalogueStatus: 'VERIFIED',
+          reconciliationRequired: true,
+          ambiguousTrack: {
+            title: item.title,
+            artist: item.artist,
+            relativePath: item.relativePath
+          },
+          summary: {
+            total: plan.length,
+            successful: successCount + previousDone.length,
+            failed: failCount,
+            skipped: skippedItems.length,
+            invalid: invalidItems.length
+          },
+          results: plan
+        });
+
+        // Halt further ingestion immediately!
+        break;
       }
+
+      item.status = 'FAILED';
+      item.reason = `Upload failed: ${item.error}`;
+      console.log(`✗ FAILED: ${item.error}`);
     }
 
     // Save incremental progress after each item for resume capability
@@ -504,13 +555,16 @@ export async function runBulkImport(cliArgs = process.argv.slice(2), testOverrid
   }
 
   console.log('\n' + '='.repeat(78));
-  console.log(' Ingestion Complete');
+  console.log(pausedForAmbiguity ? ' Ingestion Halted (Reconciliation Required)' : ' Ingestion Complete');
   console.log('='.repeat(78));
   console.log(`- Successfully Indexed : ${successCount + previousDone.length}`);
-  console.log(`- Failed               : ${failCount}`);
+  console.log(`- Failed / Ambiguous   : ${failCount}`);
   console.log(`- Skipped              : ${skippedItems.length}`);
   console.log(`- Invalid              : ${invalidItems.length}`);
   console.log(`- Full Report Saved To : ${path.resolve(reportPath)}`);
+  if (pausedForAmbiguity) {
+    console.log(' Note: To reconcile, re-run with --resume after verifying backend status.');
+  }
   console.log('='.repeat(78));
 
   return {
@@ -546,10 +600,10 @@ General Options:
   -u, --api-url <url>        Amber API base URL (default: http://localhost:8080/api/v1).
   --execute                  Execute actual uploads. Default is safe DRY RUN mode.
   -r, --report <path>        Path for progress/summary JSON report (default: ./bulk-import-report.json).
-  --resume                   Resume an interrupted run using previous report.
+  --resume                   Resume an interrupted run, skipping or reconciling completed tracks.
   --allow-duplicates         Upload tracks even if they already exist in catalogue.
   --timeout <ms>             HTTP request timeout in ms (default: 30000).
-  --max-retries <n>          Max retry attempts for transient server errors (default: 3).
+  --max-retries <n>          Max retry attempts for safe transient server errors (default: 3).
   -h, --help                 Display this help reference.
 
 CSV Manifest Format:
@@ -558,9 +612,10 @@ CSV Manifest Format:
 
 Safety Features:
   - Fails closed in --execute mode if catalogue duplicate detection fails.
+  - Halts on ambiguous upload errors (timeouts / 5xx) to prevent duplicate uploads.
+  - Reconciles uncertain tracks against remote catalogue on --resume.
   - Strict preflight media validation (format, duration bounds [1s, 600s], RMS non-silence >= 1e-5).
   - Mandatory licensing metadata (license ID and valid HTTP/HTTPS source URL).
-  - Resumable: Completed items are never blindly re-uploaded.
 `);
 }
 

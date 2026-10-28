@@ -16,8 +16,8 @@ export const SUPPORTED_EXTENSIONS = new Set([
 
 export const MIN_FILE_SIZE_BYTES = 12; // Matches AudioValidationService.java
 export const MAX_FILE_SIZE_BYTES = 26_214_400; // 25 MB (matches AudioProperties.java)
-export const MIN_DURATION_SECONDS = 1.0; // 1s (matches AudioProperties.java)
-export const MAX_DURATION_SECONDS = 600.0; // 600s / 10m (matches AudioProperties.java)
+export const MIN_DURATION_SECONDS = 1.0; // 1.0s (matches AudioProperties.java)
+export const MAX_DURATION_SECONDS = 600.0; // 600.0s / 10m (matches AudioProperties.java)
 export const MIN_RMS_ENERGY = 1e-5; // Matches AudioValidationService.java
 export const MAX_METADATA_LENGTH = 255; // Matches PostgreSQL VARCHAR(255) schema
 
@@ -154,7 +154,7 @@ export function validateAudioPath(baseDir, relativePath, options = {}) {
 
 /**
  * Inspects audio media for valid duration, silence, and decodability.
- * Uses pure Node.js WAV parser for uncompressed PCM WAV, or local FFmpeg/ffprobe
+ * Uses pure Node.js WAV parser for uncompressed PCM/Float WAV, or system FFmpeg/ffprobe
  * if available. If full media inspection is unavailable, explicitly reports this limitation.
  *
  * @param {string} filePath - Absolute path to audio file
@@ -171,7 +171,7 @@ export function validateAudioPath(baseDir, relativePath, options = {}) {
 export function inspectAudioMedia(filePath, extension) {
   const ext = (extension || path.extname(filePath)).toLowerCase();
 
-  // Fast-path: native pure-JS WAV header & PCM sample parser
+  // Fast-path: native pure-JS WAV header & sample parser
   if (ext === '.wav') {
     try {
       const wavResult = parseWavFile(filePath);
@@ -188,7 +188,7 @@ export function inspectAudioMedia(filePath, extension) {
             error: `Audio duration (${wavResult.durationSeconds.toFixed(2)}s) exceeds maximum permitted duration of ${MAX_DURATION_SECONDS}s.`
           };
         }
-        if (wavResult.isPcm16 && wavResult.rms < MIN_RMS_ENERGY) {
+        if (wavResult.isSupportedEncoding && wavResult.rms < MIN_RMS_ENERGY) {
           return {
             valid: false,
             error: `Decoded audio is completely silent (RMS energy < 1e-5).`
@@ -208,7 +208,7 @@ export function inspectAudioMedia(filePath, extension) {
     }
   }
 
-  // Next path: Try FFmpeg/ffprobe if available on machine
+  // Next path: Try FFmpeg/ffprobe if available via AMBER_FFPROBE_PATH/AMBER_FFMPEG_PATH or PATH
   const toolPaths = resolveAudioTools();
   if (toolPaths.ffprobe || toolPaths.ffmpeg) {
     const probeRes = probeViaFfmpeg(filePath, toolPaths);
@@ -246,8 +246,8 @@ export function inspectAudioMedia(filePath, extension) {
     };
   }
 
-  // If no decoding tool is available and file is not PCM WAV,
-  // report structural validity with explicit limitation.
+  // If no decoding tool is available and file is not a supported WAV,
+  // report structural validity with explicit limitation disclosure.
   return {
     valid: true,
     validationLevel: 'structural_only',
@@ -256,12 +256,14 @@ export function inspectAudioMedia(filePath, extension) {
 }
 
 /**
- * Parses WAV RIFF headers and computes duration & RMS energy without external tools.
+ * Parses WAV RIFF headers and computes duration & RMS energy across supported encodings:
+ * - PCM 8-bit, 16-bit, 24-bit, 32-bit (format 1)
+ * - IEEE Float 32-bit (format 3)
  *
  * @param {string} filePath
- * @returns {{ valid: boolean, durationSeconds?: number, rms?: number, isPcm16?: boolean, fatal?: boolean, error?: string }}
+ * @returns {{ valid: boolean, durationSeconds?: number, rms?: number, isSupportedEncoding?: boolean, fatal?: boolean, error?: string }}
  */
-function parseWavFile(filePath) {
+export function parseWavFile(filePath) {
   let buffer;
   try {
     buffer = fs.readFileSync(filePath);
@@ -297,9 +299,17 @@ function parseWavFile(filePath) {
         bitsPerSample: buffer.readUInt16LE(chunkStart + 14)
       };
     } else if (chunkId === 'data') {
+      const availableSize = Math.max(0, buffer.length - chunkStart);
+      if (chunkSize > availableSize) {
+        return {
+          valid: false,
+          fatal: true,
+          error: `Corrupt WAV file: data chunk truncated (header claims ${chunkSize} bytes, but only ${availableSize} bytes available).`
+        };
+      }
       dataChunk = {
         offset: chunkStart,
-        size: Math.min(chunkSize, buffer.length - chunkStart)
+        size: chunkSize
       };
       break;
     }
@@ -317,38 +327,97 @@ function parseWavFile(filePath) {
     return { valid: false, fatal: true, error: 'Corrupt WAV file: missing or empty "data" subchunk.' };
   }
 
+  if (fmt.sampleRate <= 0 || fmt.channels <= 0 || fmt.bitsPerSample <= 0) {
+    return { valid: false, fatal: true, error: 'Corrupt WAV file: invalid sample rate, channel count, or bit depth.' };
+  }
+
   const bytesPerSample = (fmt.bitsPerSample / 8) * fmt.channels;
-  if (bytesPerSample <= 0 || fmt.sampleRate <= 0) {
-    return { valid: false, fatal: true, error: 'Corrupt WAV file: invalid sample rate or bits per sample.' };
+  if (bytesPerSample <= 0) {
+    return { valid: false, fatal: true, error: 'Corrupt WAV file: invalid bytes per sample.' };
   }
 
   const durationSeconds = dataChunk.size / (fmt.sampleRate * bytesPerSample);
 
+  // Compute RMS across supported encodings (PCM 8/16/24/32-bit and IEEE float 32-bit)
   let rms = 0;
-  const isPcm16 = (fmt.audioFormat === 1 && fmt.bitsPerSample === 16);
-  if (isPcm16) {
-    let sumSq = 0;
-    const totalSamples = Math.floor(dataChunk.size / 2);
-    if (totalSamples > 0) {
-      for (let i = 0; i < totalSamples; i++) {
-        const sample = buffer.readInt16LE(dataChunk.offset + i * 2);
-        const norm = sample / 32768.0;
+  let isSupportedEncoding = false;
+  const audioFormat = fmt.audioFormat;
+  const bits = fmt.bitsPerSample;
+
+  if (audioFormat === 1) {
+    // Standard PCM
+    if (bits === 16) {
+      isSupportedEncoding = true;
+      let sumSq = 0;
+      const total = Math.floor(dataChunk.size / 2);
+      for (let i = 0; i < total; i++) {
+        const s = buffer.readInt16LE(dataChunk.offset + i * 2);
+        const norm = s / 32768.0;
         sumSq += norm * norm;
       }
-      rms = Math.sqrt(sumSq / totalSamples);
+      rms = total > 0 ? Math.sqrt(sumSq / total) : 0;
+    } else if (bits === 8) {
+      // Unsigned 8-bit PCM (center 128)
+      isSupportedEncoding = true;
+      let sumSq = 0;
+      const total = dataChunk.size;
+      for (let i = 0; i < total; i++) {
+        const s = buffer[dataChunk.offset + i];
+        const norm = (s - 128) / 128.0;
+        sumSq += norm * norm;
+      }
+      rms = total > 0 ? Math.sqrt(sumSq / total) : 0;
+    } else if (bits === 24) {
+      // Signed 24-bit PCM (3 bytes per sample)
+      isSupportedEncoding = true;
+      let sumSq = 0;
+      const total = Math.floor(dataChunk.size / 3);
+      for (let i = 0; i < total; i++) {
+        const idx = dataChunk.offset + i * 3;
+        const b0 = buffer[idx];
+        const b1 = buffer[idx + 1];
+        const b2 = buffer[idx + 2];
+        const raw = b0 | (b1 << 8) | (b2 << 16);
+        const signedVal = raw >= 0x800000 ? raw - 0x1000000 : raw;
+        const norm = signedVal / 8388608.0;
+        sumSq += norm * norm;
+      }
+      rms = total > 0 ? Math.sqrt(sumSq / total) : 0;
+    } else if (bits === 32) {
+      // Signed 32-bit PCM
+      isSupportedEncoding = true;
+      let sumSq = 0;
+      const total = Math.floor(dataChunk.size / 4);
+      for (let i = 0; i < total; i++) {
+        const s = buffer.readInt32LE(dataChunk.offset + i * 4);
+        const norm = s / 2147483648.0;
+        sumSq += norm * norm;
+      }
+      rms = total > 0 ? Math.sqrt(sumSq / total) : 0;
     }
+  } else if (audioFormat === 3 && bits === 32) {
+    // IEEE 32-bit float
+    isSupportedEncoding = true;
+    let sumSq = 0;
+    const total = Math.floor(dataChunk.size / 4);
+    for (let i = 0; i < total; i++) {
+      const s = buffer.readFloatLE(dataChunk.offset + i * 4);
+      sumSq += s * s;
+    }
+    rms = total > 0 ? Math.sqrt(sumSq / total) : 0;
   }
 
   return {
     valid: true,
     durationSeconds,
     rms,
-    isPcm16
+    isSupportedEncoding
   };
 }
 
 /**
- * Resolves local ffprobe or ffmpeg executables from PATH, environment variables, or standard paths.
+ * Resolves local ffprobe or ffmpeg executables strictly from environment variables or system PATH.
+ * Workstation-specific hardcoded absolute paths have been completely removed.
  *
  * @returns {{ ffprobe: string | null, ffmpeg: string | null }}
  */
@@ -357,7 +426,7 @@ export function resolveAudioTools() {
 
   const checkFile = (p) => {
     try {
-      return p && fs.existsSync(p) && fs.statSync(p).isFile();
+      return Boolean(p && typeof p === 'string' && fs.existsSync(p) && fs.statSync(p).isFile());
     } catch {
       return false;
     }
@@ -367,13 +436,7 @@ export function resolveAudioTools() {
   if (checkFile(process.env.AMBER_FFPROBE_PATH)) tools.ffprobe = process.env.AMBER_FFPROBE_PATH;
   if (checkFile(process.env.AMBER_FFMPEG_PATH)) tools.ffmpeg = process.env.AMBER_FFMPEG_PATH;
 
-  // 2. Check well-known local paths (matching AudioNormalizer.java)
-  const stremioProbe = 'C:\\Users\\rezsi\\AppData\\Local\\Programs\\Stremio\\ffprobe.exe';
-  const stremioFfmpeg = 'C:\\Users\\rezsi\\AppData\\Local\\Programs\\Stremio\\ffmpeg.exe';
-  if (!tools.ffprobe && checkFile(stremioProbe)) tools.ffprobe = stremioProbe;
-  if (!tools.ffmpeg && checkFile(stremioFfmpeg)) tools.ffmpeg = stremioFfmpeg;
-
-  // 3. Check system PATH
+  // 2. Check system PATH
   const whichCmd = process.platform === 'win32' ? 'where.exe' : 'which';
   if (!tools.ffprobe) {
     try {
@@ -437,7 +500,7 @@ function probeViaFfmpeg(filePath, tools) {
         '-f', 's16le',
         '-ac', '1',
         '-ar', '11025',
-        '-t', '10', // inspect up to first 10 seconds
+        '-t', '10',
         'pipe:1'
       ], { timeout: 15_000, maxBuffer: 10 * 11025 * 2 + 1024 });
 
@@ -464,7 +527,6 @@ function probeViaFfmpeg(filePath, tools) {
       const rms = Math.sqrt(sumSq / sampleCount);
 
       if (duration === null) {
-        // Approximate from sample count if ffprobe was not run
         duration = sampleCount / 11025.0;
       }
 
@@ -482,7 +544,7 @@ function probeViaFfmpeg(filePath, tools) {
     return {
       valid: true,
       durationSeconds: duration,
-      rmsEnergy: 0.1 // assume non-silent if probe passed but ffmpeg absent
+      rmsEnergy: 0.1
     };
   }
 

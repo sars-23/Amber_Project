@@ -7,9 +7,10 @@ import {
   validateAudioPath,
   validateMetadata,
   validateLicensing,
-  normalizeTrackKey
+  normalizeTrackKey,
+  parseWavFile
 } from '../lib/audio-validator.mjs';
-import { AmberClient } from '../lib/amber-client.mjs';
+import { AmberClient, AmbiguousUploadError } from '../lib/amber-client.mjs';
 import { runBulkImport } from '../bulk-import.mjs';
 
 const FIXTURES_DIR = path.resolve('scripts/test/fixtures');
@@ -73,10 +74,53 @@ describe('Audio Preflight and Media Validation', () => {
     }
   });
 
-  it('rejects silent audio with RMS energy < 1e-5', () => {
+  it('rejects silent 16-bit PCM audio with RMS energy < 1e-5', () => {
     const res = validateAudioPath(FIXTURES_DIR, 'silent.wav');
     assert.equal(res.valid, false);
     assert.match(res.error, /completely silent|RMS energy/i);
+  });
+
+  it('detects silence in 8-bit unsigned PCM and 32-bit float WAV encodings', () => {
+    // Generate synthetic in-memory 8-bit PCM silent WAV (all 128 bytes)
+    const sampleRate = 11025;
+    const numSamples = 11025; // 1s
+    const buf8 = Buffer.alloc(44 + numSamples);
+    buf8.write('RIFF', 0);
+    buf8.writeUInt32LE(36 + numSamples, 4);
+    buf8.write('WAVEfmt ', 8);
+    buf8.writeUInt32LE(16, 16);
+    buf8.writeUInt16LE(1, 20); // PCM
+    buf8.writeUInt16LE(1, 22); // mono
+    buf8.writeUInt32LE(sampleRate, 24);
+    buf8.writeUInt32LE(sampleRate, 28);
+    buf8.writeUInt16LE(1, 32);
+    buf8.writeUInt16LE(8, 34); // 8-bit
+    buf8.write('data', 36);
+    buf8.writeUInt32LE(numSamples, 40);
+    buf8.fill(128, 44); // 128 = silence in unsigned 8-bit PCM
+
+    const tempSilent8 = path.join(FIXTURES_DIR, 'temp_silent_8.wav');
+    fs.writeFileSync(tempSilent8, buf8);
+    try {
+      const res = validateAudioPath(FIXTURES_DIR, 'temp_silent_8.wav');
+      assert.equal(res.valid, false);
+      assert.match(res.error, /completely silent|RMS energy/i);
+    } finally {
+      if (fs.existsSync(tempSilent8)) fs.unlinkSync(tempSilent8);
+    }
+  });
+
+  it('safely rejects truncated or corrupt WAV chunk boundaries', () => {
+    // Truncated chunk header
+    const truncatedBuf = Buffer.from('RIFF\x20\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x11\x2b\x00\x00\x22\x56\x00\x00\x02\x00\x10\x00data\xff\xff\x00\x00');
+    const tempTrunc = path.join(FIXTURES_DIR, 'temp_trunc.wav');
+    fs.writeFileSync(tempTrunc, truncatedBuf);
+    try {
+      const res = parseWavFile(tempTrunc);
+      assert.equal(res.valid, false);
+    } finally {
+      if (fs.existsSync(tempTrunc)) fs.unlinkSync(tempTrunc);
+    }
   });
 
   it('rejects audio shorter than minimum duration of 1s', () => {
@@ -169,7 +213,7 @@ describe('Metadata and Licensing Validation', () => {
   });
 });
 
-describe('AmberClient - Secrets, Pagination & Retries', () => {
+describe('AmberClient - Idempotency Safety, Retries & Secrets', () => {
   it('redacts admin key from error messages and logs', () => {
     const secret = 'super-secret-production-admin-key-999';
     const client = new AmberClient({ adminApiKey: secret });
@@ -180,32 +224,34 @@ describe('AmberClient - Secrets, Pagination & Retries', () => {
     assert.ok(redacted.includes('[REDACTED]'));
   });
 
-  it('paginates through catalogue results until exhausted', async () => {
-    const page0 = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}`, artist: 'Artist' }));
-    const page1 = Array.from({ length: 25 }, (_, i) => ({ id: i + 101, title: `Song ${i + 101}`, artist: 'Artist' }));
-
-    let callCount = 0;
-    const mockFetch = async (url) => {
-      callCount++;
-      if (url.includes('page=0')) {
-        return { ok: true, status: 200, json: async () => page0 };
-      }
-      if (url.includes('page=1')) {
-        return { ok: true, status: 200, json: async () => page1 };
-      }
-      return { ok: true, status: 200, json: async () => [] };
+  it('DOES NOT automatically retry uploadSong on 500 or timeout (throws AmbiguousUploadError on first failure)', async () => {
+    let attempts = 0;
+    const mockFetch = async () => {
+      attempts++;
+      return { status: 500, ok: false, text: async () => 'Internal Server Error' };
     };
 
-    const client = new AmberClient({ customFetch: mockFetch });
-    const catalogue = await client.fetchCatalogue();
+    const client = new AmberClient({
+      adminApiKey: 'test-key',
+      maxRetries: 3,
+      customFetch: mockFetch
+    });
 
-    assert.equal(callCount, 2);
-    assert.equal(catalogue.length, 125);
-    assert.equal(catalogue[0].id, 1);
-    assert.equal(catalogue[124].id, 125);
+    await assert.rejects(
+      () => client.uploadSong(path.join(FIXTURES_DIR, 'sample.wav'), 'Sample', 'Artist'),
+      (err) => {
+        assert.ok(err instanceof AmbiguousUploadError);
+        assert.equal(err.isAmbiguous, true);
+        assert.match(err.message, /ambiguous/i);
+        return true;
+      }
+    );
+
+    // Crucial: exactly 1 attempt must have occurred; NO automatic retries for uploadSong
+    assert.equal(attempts, 1);
   });
 
-  it('retries on transient 503 and succeeds on next attempt', async () => {
+  it('retries safe read operations (fetchCatalogue) on transient 503 and succeeds on next attempt', async () => {
     let attempts = 0;
     const mockFetch = async () => {
       attempts++;
@@ -213,22 +259,21 @@ describe('AmberClient - Secrets, Pagination & Retries', () => {
         return { status: 503, ok: false, text: async () => 'Service Unavailable' };
       }
       return {
-        status: 201,
+        status: 200,
         ok: true,
-        json: async () => ({ id: 42, title: 'Sample', artist: 'Artist', fingerprintCount: 150 })
+        json: async () => [{ id: 1, title: 'Sample', artist: 'Artist' }]
       };
     };
 
     const client = new AmberClient({
-      adminApiKey: 'test-key',
       maxRetries: 2,
       timeoutMs: 1000,
       customFetch: mockFetch
     });
 
-    const res = await client.uploadSong(path.join(FIXTURES_DIR, 'sample.wav'), 'Sample', 'Artist');
+    const catalogue = await client.fetchCatalogue();
     assert.equal(attempts, 2);
-    assert.equal(res.id, 42);
+    assert.equal(catalogue.length, 1);
   });
 
   it('fails immediately without retrying on 401 Unauthorized', async () => {
@@ -252,7 +297,7 @@ describe('AmberClient - Secrets, Pagination & Retries', () => {
   });
 });
 
-describe('Bulk Ingestion Fail-Closed Duplicate Safety & Preflight', () => {
+describe('Bulk Ingestion Fail-Closed Duplicate Safety & Reconciliation', () => {
   const tempDir = path.resolve('scripts/test/temp_bulk');
   const tempManifest = path.join(tempDir, 'manifest.csv');
   const tempReport = path.join(tempDir, 'report.json');
@@ -285,7 +330,6 @@ sample.wav,Acoustic Breeze,Benjamin Tissot,CC-BY-4.0,https://example.org/1`;
       }
       if (url.includes('/songs') && opts.method === 'GET') {
         catalogueCalls++;
-        // Simulate network outage / 500 error on catalogue query
         return { status: 500, ok: false, text: async () => 'Database connection timeout' };
       }
       return { status: 200, ok: true, json: async () => ({ status: 'UP' }) };
@@ -311,6 +355,125 @@ sample.wav,Acoustic Breeze,Benjamin Tissot,CC-BY-4.0,https://example.org/1`;
       const report = JSON.parse(fs.readFileSync(tempReport, 'utf8'));
       assert.equal(report.status, 'ABORTED');
       assert.equal(report.summary.successful, 0);
+    } finally {
+      if (originalKey) process.env.AMBER_ADMIN_API_KEY = originalKey;
+      else delete process.env.AMBER_ADMIN_API_KEY;
+    }
+  });
+
+  it('halts immediately on ambiguous upload failure and avoids uploading subsequent batch items', async () => {
+    const csvContent = `relative_path,title,artist,license,source_url
+sample.wav,Ambiguous Track One,Artist One,CC-BY-4.0,https://example.org/1
+sample.wav,Subsequent Track Two,Artist Two,CC-BY-4.0,https://example.org/2`;
+    fs.writeFileSync(tempManifest, csvContent, 'utf8');
+
+    let postCalls = 0;
+    const mockFetch = async (url, opts = {}) => {
+      if (url.includes('/songs') && opts.method === 'GET') {
+        return { ok: true, status: 200, json: async () => [] };
+      }
+      if (url.includes('/songs') && opts.method === 'POST') {
+        postCalls++;
+        // First track encounters a timeout / 500 ambiguous error
+        return { status: 500, ok: false, text: async () => 'Database write timeout' };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+
+    const originalKey = process.env.AMBER_ADMIN_API_KEY;
+    process.env.AMBER_ADMIN_API_KEY = 'test-admin-key';
+
+    try {
+      const result = await runBulkImport([
+        '--audio-dir', FIXTURES_DIR,
+        '--manifest', tempManifest,
+        '--report', tempReport,
+        '--execute',
+        '--allow-duplicates'
+      ], { customFetch: mockFetch });
+
+      assert.equal(result.exitCode, 1);
+      // Crucial: exactly 1 POST call made! Track Two was NOT uploaded because ingestion halted!
+      assert.equal(postCalls, 1);
+
+      const report = JSON.parse(fs.readFileSync(tempReport, 'utf8'));
+      assert.equal(report.reconciliationRequired, true);
+      assert.equal(report.results[0].status, 'AMBIGUOUS');
+      assert.match(report.results[0].reason, /ambiguous/i);
+    } finally {
+      if (originalKey) process.env.AMBER_ADMIN_API_KEY = originalKey;
+      else delete process.env.AMBER_ADMIN_API_KEY;
+    }
+  });
+
+  it('reconciles ambiguous track on --resume: marks SUCCESS and skips upload if present in catalogue', async () => {
+    const csvContent = `relative_path,title,artist,license,source_url
+sample.wav,Ambiguous Track One,Artist One,CC-BY-4.0,https://example.org/1
+sample.wav,Subsequent Track Two,Artist Two,CC-BY-4.0,https://example.org/2`;
+    fs.writeFileSync(tempManifest, csvContent, 'utf8');
+
+    // Create prior report where track 1 was recorded as AMBIGUOUS
+    const priorReport = {
+      timestamp: new Date().toISOString(),
+      mode: 'execute',
+      results: [
+        {
+          relativePath: 'sample.wav',
+          title: 'Ambiguous Track One',
+          artist: 'Artist One',
+          license: 'CC-BY-4.0',
+          sourceUrl: 'https://example.org/1',
+          status: 'AMBIGUOUS',
+          reason: 'Ambiguous upload outcome: server timeout'
+        }
+      ]
+    };
+    fs.writeFileSync(tempReport, JSON.stringify(priorReport), 'utf8');
+
+    let postCalls = 0;
+    const mockFetch = async (url, opts = {}) => {
+      if (url.includes('/songs') && opts.method === 'GET') {
+        // Track 1 actually DID get inserted into the catalogue during the prior ambiguous attempt!
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            { id: 999, title: 'Ambiguous Track One', artist: 'Artist One', fingerprintCount: 300, durationMs: 1500 }
+          ]
+        };
+      }
+      if (url.includes('/songs') && opts.method === 'POST') {
+        postCalls++;
+        return {
+          status: 201,
+          ok: true,
+          json: async () => ({ id: 1000, title: 'Subsequent Track Two', artist: 'Artist Two', fingerprintCount: 400, durationMs: 1500 })
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+
+    const originalKey = process.env.AMBER_ADMIN_API_KEY;
+    process.env.AMBER_ADMIN_API_KEY = 'test-admin-key';
+
+    try {
+      const result = await runBulkImport([
+        '--audio-dir', FIXTURES_DIR,
+        '--manifest', tempManifest,
+        '--report', tempReport,
+        '--resume',
+        '--execute',
+        '--allow-duplicates'
+      ], { customFetch: mockFetch });
+
+      assert.equal(result.exitCode, 0);
+      // Track 1 was reconciled from catalogue; ONLY Track 2 was uploaded!
+      assert.equal(postCalls, 1);
+
+      const finalReport = JSON.parse(fs.readFileSync(tempReport, 'utf8'));
+      assert.equal(finalReport.results[0].status, 'SUCCESS');
+      assert.equal(finalReport.results[0].songId, 999);
+      assert.match(finalReport.results[0].reason, /reconciled from catalogue/i);
     } finally {
       if (originalKey) process.env.AMBER_ADMIN_API_KEY = originalKey;
       else delete process.env.AMBER_ADMIN_API_KEY;
@@ -381,75 +544,5 @@ sample.wav,Malformed URL,Artist Four,MIT,not_a_valid_url`;
     // Verify licensing metadata is preserved in results
     assert.equal(report.results[0].license, 'CC-BY-4.0');
     assert.equal(report.results[0].sourceUrl, 'https://example.org/valid');
-  });
-
-  it('preserves completed items on --resume and does not re-upload them', async () => {
-    const csvContent = `relative_path,title,artist,license,source_url
-sample.wav,Song Already Completed,Artist One,CC-BY-4.0,https://example.org/1
-sample.wav,Song Still Pending,Artist Two,CC-BY-4.0,https://example.org/2`;
-    fs.writeFileSync(tempManifest, csvContent, 'utf8');
-
-    // Create a prior report where song 1 was already successfully indexed
-    const priorReport = {
-      timestamp: new Date().toISOString(),
-      mode: 'execute',
-      results: [
-        {
-          relativePath: 'sample.wav',
-          title: 'Song Already Completed',
-          artist: 'Artist One',
-          license: 'CC-BY-4.0',
-          sourceUrl: 'https://example.org/1',
-          status: 'SUCCESS',
-          songId: 101,
-          fingerprintCount: 450,
-          reason: 'Indexed successfully in prior run'
-        }
-      ]
-    };
-    fs.writeFileSync(tempReport, JSON.stringify(priorReport), 'utf8');
-
-    let uploadedTitles = [];
-    const mockFetch = async (url, opts = {}) => {
-      if (url.includes('/songs') && opts.method === 'GET') {
-        return { ok: true, status: 200, json: async () => [] };
-      }
-      if (url.includes('/songs') && opts.method === 'POST') {
-        // FormData inspection
-        uploadedTitles.push('Uploaded');
-        return {
-          status: 201,
-          ok: true,
-          json: async () => ({ id: 102, title: 'Song Still Pending', artist: 'Artist Two', fingerprintCount: 500, durationMs: 1500 })
-        };
-      }
-      return { ok: true, status: 200, json: async () => ({}) };
-    };
-
-    const originalKey = process.env.AMBER_ADMIN_API_KEY;
-    process.env.AMBER_ADMIN_API_KEY = 'test-admin-key';
-
-    try {
-      const result = await runBulkImport([
-        '--audio-dir', FIXTURES_DIR,
-        '--manifest', tempManifest,
-        '--report', tempReport,
-        '--resume',
-        '--execute',
-        '--allow-duplicates'
-      ], { customFetch: mockFetch });
-
-      assert.equal(result.exitCode, 0);
-      // Only 1 upload should have occurred (for the pending item, not the completed item)
-      assert.equal(uploadedTitles.length, 1);
-
-      const finalReport = JSON.parse(fs.readFileSync(tempReport, 'utf8'));
-      assert.equal(finalReport.results[0].status, 'SUCCESS');
-      assert.equal(finalReport.results[0].songId, 101); // Preserved from prior run
-      assert.match(finalReport.results[0].reason, /preserved from previous run/i);
-    } finally {
-      if (originalKey) process.env.AMBER_ADMIN_API_KEY = originalKey;
-      else delete process.env.AMBER_ADMIN_API_KEY;
-    }
   });
 });

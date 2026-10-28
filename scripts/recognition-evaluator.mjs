@@ -266,20 +266,30 @@ export async function runEvaluation(cliArgs = process.argv.slice(2)) {
   console.log(' EVALUATION METRICS REPORT');
   console.log('='.repeat(78));
   console.log(` Total Queries Executed    : ${metrics.summary.totalExecuted}`);
+  console.log(` Failed Requests (Errors)  : ${metrics.summary.failedRequests}`);
   console.log(` Expected Target Songs     : ${metrics.summary.expectedMatches}`);
   console.log(` Negative Control Excerpts : ${metrics.summary.negativeControls}`);
-  console.log(` Failed Requests           : ${metrics.summary.failedRequests}`);
   console.log('-'.repeat(78));
-  console.log(` Correct Matches           : ${metrics.summary.correctMatches}`);
-  console.log(` False Negatives (Missed)  : ${metrics.summary.falseNegatives} (${metrics.summary.falseNegativeRatePercent}%)`);
-  console.log(` False Positives (Wrong)   : ${metrics.summary.falsePositives} (${metrics.summary.falsePositiveRatePercent}%)`);
-  console.log(` Identification Accuracy   : ${metrics.summary.matchRatePercent}%`);
+  console.log(` Correct Identifications   : ${metrics.summary.correctMatches} (${metrics.summary.identificationRatePercent}%)`);
+  console.log(` Missed Expected Matches   : ${metrics.summary.missedExpectedMatches} (${metrics.summary.missedRatePercent}%)`);
+  console.log(` Wrong-Song Identifications: ${metrics.summary.wrongSongIdentifications} (${metrics.summary.wrongSongRatePercent}%)`);
   console.log('-'.repeat(78));
+  if (metrics.summary.negativeControls > 0) {
+    console.log(` Negative True Negatives   : ${metrics.summary.negativeControlTrueNegatives} (${metrics.summary.trueNegativeRatePercent}%)`);
+    console.log(` Negative False Positives  : ${metrics.summary.negativeControlFalsePositives} (${metrics.summary.falsePositiveRatePercent}%)`);
+    console.log('-'.repeat(78));
+  } else {
+    console.log(` Negative Control FPR      : N/A (No negative controls in dataset)`);
+    console.log('-'.repeat(78));
+  }
   if (metrics.offsetAccuracy.evaluatedCount > 0) {
-    console.log(` Evaluated Offsets         : ${metrics.offsetAccuracy.evaluatedCount}`);
+    console.log(` Evaluated Offsets         : ${metrics.offsetAccuracy.evaluatedCount} (Unavailable: ${metrics.offsetAccuracy.unavailableCount})`);
     console.log(` Within Tolerance (±${metrics.offsetAccuracy.toleranceMs}ms) : ${metrics.offsetAccuracy.withinToleranceCount} (${metrics.offsetAccuracy.withinToleranceRatePercent}%)`);
     console.log(` Mean Absolute Error (MAE) : ${metrics.offsetAccuracy.meanAbsoluteErrorMs} ms`);
     console.log(` Min / Max Offset Error    : ${metrics.offsetAccuracy.minErrorMs} ms / ${metrics.offsetAccuracy.maxErrorMs} ms`);
+    console.log('-'.repeat(78));
+  } else if (metrics.offsetAccuracy.unavailableCount > 0) {
+    console.log(` Offset Measurements       : 0 evaluated (${metrics.offsetAccuracy.unavailableCount} unavailable/missing from response)`);
     console.log('-'.repeat(78));
   }
   if (metrics.latencyDistribution.sampleCount > 0) {
@@ -295,7 +305,7 @@ export async function runEvaluation(cliArgs = process.argv.slice(2)) {
     console.log(' Segmented Accuracy Breakdown:');
     for (const [lbl, b] of Object.entries(metrics.breakdownByLabel)) {
       const maeStr = b.offsetMaeMs !== null ? ` | Offset MAE: ${b.offsetMaeMs}ms` : '';
-      console.log(`   [${lbl.padEnd(16)}] Match Rate: ${b.matchRatePercent}% (${b.correctMatches}/${b.expected})${maeStr} | Med Latency: ${b.medianLatencyMs}ms`);
+      console.log(`   [${lbl.padEnd(16)}] Identification Rate: ${b.identificationRatePercent}% (${b.correctMatches}/${b.expectedMatches})${maeStr} | Med Latency: ${b.medianLatencyMs}ms`);
     }
     console.log('-'.repeat(78));
   }
@@ -316,7 +326,7 @@ export async function runEvaluation(cliArgs = process.argv.slice(2)) {
       matchedTitle: q.matchedSong ? q.matchedSong.title : null,
       matchedArtist: q.matchedSong ? q.matchedSong.artist : null,
       estimatedOffsetMs: q.estimatedOffsetMs,
-      offsetErrorMs: (typeof q.expectedOffsetMs === 'number' && typeof q.estimatedOffsetMs === 'number')
+      offsetErrorMs: (typeof q.expectedOffsetMs === 'number' && typeof q.estimatedOffsetMs === 'number' && !isNaN(q.estimatedOffsetMs))
         ? Math.abs(q.estimatedOffsetMs - q.expectedOffsetMs)
         : null,
       confidence: q.confidence,
