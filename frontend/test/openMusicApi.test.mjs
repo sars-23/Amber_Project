@@ -132,5 +132,20 @@ describe('Open Music API Service', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+    });
+
+    try {
+      await assert.rejects(
+        async () => searchOpenMusicTracks('piano'),
+        /Search rate limit reached/
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

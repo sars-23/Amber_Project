@@ -7,9 +7,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,6 +30,9 @@ class OpenMusicQueueLifecycleTest {
 
     @Autowired
     private SongRepository songRepository;
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     @Test
     @DisplayName("Queue lifecycle: create, claim, complete, and verify counts")
@@ -129,7 +136,11 @@ class OpenMusicQueueLifecycleTest {
         Optional<QueuedImportItem> claimed = repository.claimNextPending();
         assertTrue(claimed.isPresent());
 
-        // Simulate crash/restart
+        // Simulate crash/timeout: expire the lease
+        jdbc.update("UPDATE open_music_import_items SET lease_until = ?",
+                Timestamp.from(Instant.now().minus(Duration.ofMinutes(10))));
+
+        // Simulate recovery
         repository.recoverInterruptedJobs();
 
         OpenMusicImportJobView recovered = repository.findJob(jobId).orElseThrow();

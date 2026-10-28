@@ -8,7 +8,6 @@ record QueuedImportItem(
         String externalTrackId,
         String title,
         String artist,
-        String downloadUrl,
         String sourceUrl,
         String licenseUrl,
         String attributionText

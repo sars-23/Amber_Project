@@ -6,6 +6,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,8 +17,15 @@ import java.util.UUID;
 public class OpenMusicImportRepository {
     private final JdbcTemplate jdbc;
 
+    private final String instanceId = "worker-" + UUID.randomUUID();
+    public static final Duration DEFAULT_LEASE_DURATION = Duration.ofMinutes(5);
+
     public OpenMusicImportRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    public String getInstanceId() {
+        return instanceId;
     }
 
     @Transactional
@@ -29,23 +37,24 @@ public class OpenMusicImportRepository {
             jdbc.update("""
                     INSERT INTO open_music_import_items
                     (id, job_id, provider, external_track_id, title, artist, album_name, duration_seconds,
-                     download_url, source_url, license_url, attribution_text, status)
-                    VALUES (?, ?, 'jamendo', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+                     source_url, license_url, attribution_text, status)
+                    VALUES (?, ?, 'jamendo', ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
                     """,
                     UUID.randomUUID(), jobId, track.id(), track.title(), track.artist(), track.album(),
-                    track.durationSeconds(), track.downloadUrl(), track.sourceUrl(), track.licenseUrl(), track.attributionText());
+                    track.durationSeconds(), track.sourceUrl(), track.licenseUrl(), track.attributionText());
         }
         return jobId;
     }
 
     @Transactional
-    public Optional<QueuedImportItem> claimNextPending() {
+    public Optional<QueuedImportItem> claimNextPending(String workerId, Duration leaseDuration) {
         String selectSql = """
                 SELECT i.id, i.job_id, i.external_track_id, i.title, i.artist,
-                       i.download_url, i.source_url, i.license_url, i.attribution_text
+                       i.source_url, i.license_url, i.attribution_text
                 FROM open_music_import_items i
                 JOIN open_music_import_jobs j ON j.id = i.job_id
-                WHERE i.status = 'PENDING' AND j.status IN ('QUEUED', 'RUNNING')
+                WHERE (i.status = 'PENDING' OR (i.status = 'PROCESSING' AND i.lease_until IS NOT NULL AND i.lease_until < CURRENT_TIMESTAMP))
+                  AND j.status IN ('QUEUED', 'RUNNING')
                 ORDER BY i.created_at, i.id
                 LIMIT 1
                 FOR UPDATE
@@ -53,17 +62,50 @@ public class OpenMusicImportRepository {
         List<QueuedImportItem> items = jdbc.query(selectSql, (rs, rowNum) -> new QueuedImportItem(
                 rs.getObject("id", UUID.class), rs.getObject("job_id", UUID.class),
                 rs.getString("external_track_id"), rs.getString("title"), rs.getString("artist"),
-                rs.getString("download_url"), rs.getString("source_url"), rs.getString("license_url"),
+                rs.getString("source_url"), rs.getString("license_url"),
                 rs.getString("attribution_text")));
         if (items.isEmpty()) return Optional.empty();
         QueuedImportItem item = items.get(0);
-        jdbc.update("UPDATE open_music_import_items SET status = 'PROCESSING', attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                item.id());
+
+        Timestamp leaseUntil = Timestamp.from(Instant.now().plus(leaseDuration));
+        int updated = jdbc.update("""
+                UPDATE open_music_import_items
+                SET status = 'PROCESSING',
+                    attempts = attempts + 1,
+                    lease_until = ?,
+                    locked_by = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND (status = 'PENDING' OR (status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < CURRENT_TIMESTAMP))
+                """, leaseUntil, workerId, item.id());
+
+        if (updated == 0) {
+            // Concurrent worker claimed this item first
+            return Optional.empty();
+        }
+
         jdbc.update("UPDATE open_music_import_jobs SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'QUEUED'",
                 item.jobId());
         return Optional.of(item);
     }
 
+    @Transactional
+    public Optional<QueuedImportItem> claimNextPending() {
+        return claimNextPending(instanceId, DEFAULT_LEASE_DURATION);
+    }
+
+    @Transactional
+    public boolean renewLease(UUID itemId, String workerId, Duration leaseDuration) {
+        Timestamp newLease = Timestamp.from(Instant.now().plus(leaseDuration));
+        int updated = jdbc.update("""
+                UPDATE open_music_import_items
+                SET lease_until = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'PROCESSING' AND locked_by = ?
+                """, newLease, itemId, workerId);
+        return updated > 0;
+    }
+
+    @Transactional
     public void markItem(UUID itemId, String status, String error, Long songId, Long downloadedBytes, String sha256) {
         String safeError = error;
         if (safeError != null && safeError.length() > 590) safeError = safeError.substring(0, 590);
@@ -71,7 +113,10 @@ public class OpenMusicImportRepository {
                 UPDATE open_music_import_items
                 SET status = ?, error_message = ?, song_id = COALESCE(?, song_id),
                     downloaded_bytes = COALESCE(?, downloaded_bytes),
-                    content_sha256 = COALESCE(?, content_sha256), updated_at = CURRENT_TIMESTAMP
+                    content_sha256 = COALESCE(?, content_sha256),
+                    lease_until = NULL,
+                    locked_by = NULL,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """, status, safeError, songId, downloadedBytes, sha256, itemId);
     }
@@ -186,19 +231,50 @@ public class OpenMusicImportRepository {
         return true;
     }
 
-    public void recoverInterruptedJobs() {
-        jdbc.update("""
-                UPDATE open_music_import_items i
-                SET status = CASE WHEN j.status = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'PENDING' END,
+    @Transactional
+    public int recoverStaleProcessing(Duration staleTimeout) {
+        Timestamp staleThreshold = Timestamp.from(Instant.now().minus(staleTimeout));
+
+        List<UUID> affectedJobs = jdbc.query("""
+                SELECT DISTINCT job_id FROM open_music_import_items
+                WHERE status = 'PROCESSING'
+                  AND (
+                      (lease_until IS NOT NULL AND lease_until < CURRENT_TIMESTAMP)
+                      OR (lease_until IS NULL AND updated_at < ?)
+                  )
+                """, (rs, rowNum) -> rs.getObject("job_id", UUID.class), staleThreshold);
+
+        int recoveredItems = jdbc.update("""
+                UPDATE open_music_import_items
+                SET status = CASE
+                        WHEN (SELECT j.status FROM open_music_import_jobs j WHERE j.id = open_music_import_items.job_id) = 'CANCEL_REQUESTED'
+                        THEN 'CANCELLED'
+                        ELSE 'PENDING'
+                    END,
+                    lease_until = NULL,
+                    locked_by = NULL,
                     updated_at = CURRENT_TIMESTAMP
-                FROM open_music_import_jobs j
-                WHERE i.job_id = j.id AND i.status = 'PROCESSING'
-                """);
-        jdbc.update("UPDATE open_music_import_jobs SET status = 'QUEUED', completed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE status = 'RUNNING'");
-        jdbc.update("UPDATE open_music_import_jobs SET status = 'CANCELLED', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE status = 'CANCEL_REQUESTED'");
-        List<UUID> queuedJobs = jdbc.query("SELECT id FROM open_music_import_jobs WHERE status = 'QUEUED'",
-                (rs, rowNum) -> rs.getObject("id", UUID.class));
-        for (UUID jobId : queuedJobs) refreshJobStatus(jobId);
+                WHERE status = 'PROCESSING'
+                  AND (
+                      (lease_until IS NOT NULL AND lease_until < CURRENT_TIMESTAMP)
+                      OR (lease_until IS NULL AND updated_at < ?)
+                  )
+                """, staleThreshold);
+
+        for (UUID jobId : affectedJobs) {
+            refreshJobStatus(jobId);
+        }
+        return recoveredItems;
+    }
+
+    @Transactional
+    public int recoverStaleProcessing() {
+        return recoverStaleProcessing(Duration.ofMinutes(5));
+    }
+
+    @Transactional
+    public void recoverInterruptedJobs() {
+        recoverStaleProcessing(Duration.ofMinutes(5));
     }
 
     private static Instant instant(Timestamp timestamp) {

@@ -13,6 +13,7 @@ async function responseError(response: Response, fallback: string): Promise<Erro
   const data = await response.json().catch(() => ({})) as { message?: string; error?: string };
   if (response.status === 401) return new Error('Amber admin authorization is required.');
   if (response.status === 403) return new Error(data.message || 'The Amber Admin API Key was rejected.');
+  if (response.status === 429) return new Error('Search rate limit reached. Please wait a moment before searching again.');
   return new Error(data.message || data.error || `${fallback} (HTTP ${response.status})`);
 }
 

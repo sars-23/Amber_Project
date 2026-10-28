@@ -34,18 +34,50 @@ class OpenMusicControllerSecurityTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private OpenMusicSearchRateLimiter rateLimiter;
+
     @MockBean
     private OpenMusicImportService openMusicImportService;
 
     @Test
     @DisplayName("Search endpoint is public and does not require authentication")
     void searchEndpointIsPublic() throws Exception {
-        when(openMusicImportService.search(any(), anyInt())).thenReturn(List.of());
+        rateLimiter.reset();
+        JamendoTrackView trackView = new JamendoTrackView("123", "Song", "Artist", "Album", 120,
+                "https://jamendo.com/track/123", "https://creativecommons.org/licenses/by/4.0/",
+                "Creative Commons Attribution (CC BY)", "Artist - Song");
+        when(openMusicImportService.search(any(), anyInt())).thenReturn(List.of(trackView));
 
         mockMvc.perform(get("/api/v1/open-music/search")
                         .param("q", "rock")
                         .param("limit", "10"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].id").value("123"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].downloadUrl").doesNotExist())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].clientId").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("Search endpoint enforces rate limiting with 429 and Retry-After header")
+    void searchEndpointEnforcesRateLimit() throws Exception {
+        rateLimiter.reset();
+        when(openMusicImportService.search(any(), anyInt())).thenReturn(List.of());
+
+        // Exhaust the 30 requests allowed in the window
+        for (int i = 0; i < 30; i++) {
+            mockMvc.perform(get("/api/v1/open-music/search")
+                            .param("q", "ambient")
+                            .header("X-Forwarded-For", "203.0.113.195"))
+                    .andExpect(status().isOk());
+        }
+
+        // 31st request from same IP must receive HTTP 429 Too Many Requests
+        mockMvc.perform(get("/api/v1/open-music/search")
+                        .param("q", "ambient")
+                        .header("X-Forwarded-For", "203.0.113.195"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().exists("Retry-After"));
     }
 
     @Test

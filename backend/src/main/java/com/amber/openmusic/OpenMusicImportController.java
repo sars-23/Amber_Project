@@ -17,16 +17,28 @@ import java.util.UUID;
 public class OpenMusicImportController {
     private final OpenMusicImportService service;
     private final AdminAuthService adminAuthService;
+    private final OpenMusicSearchRateLimiter rateLimiter;
 
-    public OpenMusicImportController(OpenMusicImportService service, AdminAuthService adminAuthService) {
+    public OpenMusicImportController(OpenMusicImportService service,
+                                     AdminAuthService adminAuthService,
+                                     OpenMusicSearchRateLimiter rateLimiter) {
         this.service = service;
         this.adminAuthService = adminAuthService;
+        this.rateLimiter = rateLimiter;
     }
 
     @GetMapping("/search")
-    public List<JamendoTrackView> search(@RequestParam("q") String query,
-                                         @RequestParam(defaultValue = "20") int limit) {
-        return service.search(query, limit);
+    public ResponseEntity<List<JamendoTrackView>> search(@RequestParam("q") String query,
+                                                         @RequestParam(defaultValue = "20") int limit,
+                                                         HttpServletRequest request) {
+        String clientIp = rateLimiter.resolveClientIp(request);
+        if (!rateLimiter.tryAcquire(clientIp)) {
+            long retryAfter = rateLimiter.getRetryAfterSeconds(clientIp);
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header("Retry-After", String.valueOf(retryAfter))
+                    .build();
+        }
+        return ResponseEntity.ok(service.search(query, limit));
     }
 
     @PostMapping("/jobs")

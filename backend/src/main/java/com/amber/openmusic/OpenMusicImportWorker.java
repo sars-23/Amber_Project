@@ -163,7 +163,14 @@ public class OpenMusicImportWorker {
                     String location = response.headers().firstValue("Location").orElseThrow(
                             () -> new IOException("Jamendo download redirect omitted its target."));
                     if (redirectCount == 4) throw new IOException("Too many redirects while downloading track.");
-                    uri = uri.resolve(location);
+                    URI redirectUri;
+                    try {
+                        redirectUri = uri.resolve(location);
+                    } catch (IllegalArgumentException ex) {
+                        throw new IOException("Invalid redirect destination: " + location);
+                    }
+                    validateDownloadUri(redirectUri);
+                    uri = redirectUri;
                 }
                 continue;
             }
@@ -193,12 +200,22 @@ public class OpenMusicImportWorker {
         throw new IOException("Unable to resolve Jamendo download URL.");
     }
 
-    private static void validateDownloadUri(URI uri) throws IOException {
+    public static void validateDownloadUri(URI uri) throws IOException {
+        if (uri == null) {
+            throw new IOException("Download URL cannot be null.");
+        }
         String scheme = uri.getScheme();
         if (!"https".equalsIgnoreCase(scheme)) {
             throw new IOException("Download URL must use HTTPS.");
         }
-        if (uri.getUserInfo() != null) {
+        int port = uri.getPort();
+        if (port != -1 && port != 443) {
+            throw new IOException("Download URL must use the default HTTPS port (443). Found port: " + port);
+        }
+        if (uri.getUserInfo() != null && !uri.getUserInfo().isBlank()) {
+            throw new IOException("Download URL contains embedded credentials.");
+        }
+        if (uri.getRawUserInfo() != null && !uri.getRawUserInfo().isBlank()) {
             throw new IOException("Download URL contains embedded credentials.");
         }
         String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
@@ -207,7 +224,7 @@ public class OpenMusicImportWorker {
         }
     }
 
-    private static boolean isApprovedJamendoHost(String host) {
+    public static boolean isApprovedJamendoHost(String host) {
         if (host == null || host.isBlank()) return false;
         String h = host.toLowerCase(Locale.ROOT);
         return h.equals("storage.jamendo.com")

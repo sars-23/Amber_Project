@@ -4,16 +4,27 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.UUID;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.*;
 
 @Service
 public class OpenMusicImportService {
     private static final int MAX_BATCH_SIZE = 25;
+    private static final int MAX_CACHE_ENTRIES = 500;
+    private static final Duration CACHE_TTL = Duration.ofMinutes(3);
+
     private final JamendoClient jamendoClient;
     private final OpenMusicImportRepository repository;
+
+    private record CacheEntry(List<JamendoTrackView> results, Instant expiresAt) {}
+
+    private final Map<String, CacheEntry> searchCache = new LinkedHashMap<>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, CacheEntry> eldest) {
+            return size() > MAX_CACHE_ENTRIES;
+        }
+    };
 
     public OpenMusicImportService(JamendoClient jamendoClient, OpenMusicImportRepository repository) {
         this.jamendoClient = jamendoClient;
@@ -21,8 +32,30 @@ public class OpenMusicImportService {
     }
 
     public List<JamendoTrackView> search(String query, int limit) {
-        return jamendoClient.search(query, Math.max(1, Math.min(limit, 25)))
+        int clampedLimit = Math.max(1, Math.min(limit, 25));
+        String normalizedQuery = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        String cacheKey = normalizedQuery + ":" + clampedLimit;
+
+        synchronized (searchCache) {
+            CacheEntry entry = searchCache.get(cacheKey);
+            if (entry != null && Instant.now().isBefore(entry.expiresAt())) {
+                return entry.results();
+            }
+        }
+
+        List<JamendoTrackView> fresh = jamendoClient.search(query, clampedLimit)
                 .stream().map(JamendoTrackView::from).toList();
+
+        synchronized (searchCache) {
+            searchCache.put(cacheKey, new CacheEntry(fresh, Instant.now().plus(CACHE_TTL)));
+        }
+        return fresh;
+    }
+
+    public void clearSearchCache() {
+        synchronized (searchCache) {
+            searchCache.clear();
+        }
     }
 
     public UUID createJob(List<String> requestedIds) {
