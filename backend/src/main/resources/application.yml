@@ -39,6 +39,10 @@ amber:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,https://*.onrender.com,https://*.vercel.app}
   admin:
     api-key: ${AMBER_ADMIN_API_KEY:}
+  jamendo:
+    client-id: ${JAMENDO_CLIENT_ID:}
+  open-music:
+    worker-delay-ms: ${AMBER_OPEN_MUSIC_WORKER_DELAY_MS:3000}
   proxy:
     behind-proxy: ${AMBER_BEHIND_PROXY:true}
   rate-limit:

@@ -20,6 +20,8 @@ services:
         value: https://*.onrender.com,https://*.vercel.app,http://localhost:3000,http://localhost:5173
       - key: AMBER_ADMIN_API_KEY
         sync: false
+      - key: JAMENDO_CLIENT_ID
+        sync: false
       - key: JAVA_OPTS
         value: -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
 

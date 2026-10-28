@@ -41,6 +41,7 @@ Instead of delegating to third-party recognition APIs or external math libraries
 - **Live Browser Microphone Recognition**: Continuous 11,025 Hz mono PCM streaming via native Web Audio `AudioWorklet` downsamplers and bidirectional WebSockets.
 - **Noise Lab Benchmark Suite**: An in-memory acoustic stress-testing harness that simulates real-world noise by mixing additive white Gaussian noise at configurable Signal-to-Noise Ratios (SNR from +50 dB down to -10 dB).
 - **Administrative Write Protection**: Server-enforced authorization via `AMBER_ADMIN_API_KEY` with fail-closed verification, preventing unauthorized catalog mutations while keeping search and live recognition public.
+- **Open Music Importer**: Search Jamendo for download-enabled CC BY / CC BY-SA music and queue durable bulk imports through Amber's existing fingerprinting pipeline. See [the importer guide](docs/OPEN_MUSIC_IMPORTER.md).
 - **Rate-Limited Operational Safety**: Per-client bounded sliding-window rate limiting on compute-heavy benchmark endpoints with Render reverse-proxy client IP verification.
 
 ---

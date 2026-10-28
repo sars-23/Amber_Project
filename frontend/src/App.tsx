@@ -5,13 +5,14 @@ import { SystemStatusModal } from './components/SystemStatusModal';
 import { FileSearch } from './components/FileSearch';
 import { SongLibrary } from './components/SongLibrary';
 import { BulkImporter } from './components/BulkImporter';
+import { OpenMusicImporter } from './components/OpenMusicImporter';
 import { LiveMicrophoneRecognition } from './components/LiveMicrophoneRecognition';
 import { NoiseLab } from './components/NoiseLab';
 import type { Song, StatsResponse, HealthResponse } from './types/api';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavigationTab>('search');
-  const [libraryMode, setLibraryMode] = useState<'catalog' | 'bulk'>('catalog');
+  const [libraryMode, setLibraryMode] = useState<'catalog' | 'bulk' | 'openmusic'>('catalog');
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [songs, setSongs] = useState<Song[]>([]);
@@ -84,10 +85,16 @@ export const App: React.FC = () => {
               loading={loading}
               onRefresh={loadData}
               onOpenBulkImport={() => setLibraryMode('bulk')}
+              onOpenOpenMusic={() => setLibraryMode('openmusic')}
             />
-          ) : (
+          ) : libraryMode === 'bulk' ? (
             <BulkImporter
               existingSongs={songs}
+              onImportComplete={loadData}
+              onNavigateToCatalog={() => setLibraryMode('catalog')}
+            />
+          ) : (
+            <OpenMusicImporter
               onImportComplete={loadData}
               onNavigateToCatalog={() => setLibraryMode('catalog')}
             />

@@ -14,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Objects;
 
+import com.amber.song.SongSourceMetadata;
+
 /**
  * Service orchestrating transactional indexing of complete audio recordings into PostgreSQL.
  */
@@ -46,11 +48,23 @@ public class SongIndexingService {
         Objects.requireNonNull(artist, "Artist cannot be null");
 
         log.info("Starting indexing for track '{}' by '{}' ({} bytes)", title, artist, audioBytes != null ? audioBytes.length : 0);
-
-        // 1. Decode & normalize
         PcmAudio pcmAudio = audioDecoderService.decodeAndNormalize(audioBytes, filenameHint);
+        return indexDecoded(title, artist, pcmAudio, null);
+    }
 
-        return indexPcmAudio(title, artist, pcmAudio);
+    /**
+     * Ingests a source track and retains provenance metadata atomically with fingerprints.
+     */
+    @Transactional
+    public Song indexSongFromSource(String title, String artist, byte[] audioBytes, String filenameHint,
+                                    SongSourceMetadata sourceMetadata) {
+        Objects.requireNonNull(title, "Title cannot be null");
+        Objects.requireNonNull(artist, "Artist cannot be null");
+        Objects.requireNonNull(sourceMetadata, "Source metadata cannot be null");
+
+        log.info("Starting source indexing for '{}' by '{}' ({} bytes)", title, artist, audioBytes != null ? audioBytes.length : 0);
+        PcmAudio pcmAudio = audioDecoderService.decodeAndNormalize(audioBytes, filenameHint);
+        return indexDecoded(title, artist, pcmAudio, sourceMetadata);
     }
 
     /**
@@ -58,14 +72,20 @@ public class SongIndexingService {
      */
     @Transactional
     public Song indexPcmAudio(String title, String artist, PcmAudio pcmAudio) {
+        return indexDecoded(title, artist, pcmAudio, null);
+    }
+
+    private Song indexDecoded(String title, String artist, PcmAudio pcmAudio, SongSourceMetadata sourceMetadata) {
         long startTime = System.currentTimeMillis();
 
         // 1. Generate constellation fingerprints
         List<Fingerprint> fingerprints = fingerprintGenerator.generateFingerprints(pcmAudio);
 
-        // 2. Persist song record
+        // 2. Persist song record (with or without source metadata)
         Song song = new Song(title.trim(), artist.trim(), pcmAudio.getDurationMs());
-        Song savedSong = songRepository.save(song);
+        Song savedSong = (sourceMetadata == null)
+                ? songRepository.save(song)
+                : songRepository.saveFromSource(song, sourceMetadata);
 
         // 3. Batch insert fingerprints
         int inserted = fingerprintRepository.batchInsert(savedSong.id(), fingerprints);
