@@ -167,4 +167,126 @@ class OpenMusicWorkerHeartbeatIntegrationTest {
                 "SELECT locked_by FROM open_music_import_items WHERE id = ?", String.class, item.id());
         assertEquals("worker-C", currentOwner, "Worker A must NOT overwrite worker C's ownership");
     }
+
+    @Test
+    @DisplayName("Heartbeat database exception treats ownership as unverified, aborts safely, and allows lease to expire naturally")
+    void testTransientHeartbeatDatabaseExceptionAbortsSafelyAndLeavesLeaseToExpireNaturally() throws Exception {
+        JamendoTrack track = new JamendoTrack("803", "DB Failure Track", "Artist", "Album", 180,
+                "https://storage.jamendo.com/803.mp3", "https://jamendo.com/track/803",
+                "https://creativecommons.org/licenses/by/4.0/", "Attribution");
+
+        UUID jobId = repository.createJob(List.of(track));
+
+        CountDownLatch trackFetchStarted = new CountDownLatch(1);
+        CountDownLatch finishTask = new CountDownLatch(1);
+
+        JamendoClient mockClient = Mockito.mock(JamendoClient.class);
+        when(mockClient.fetchPermittedTrack("803")).thenAnswer(invocation -> {
+            trackFetchStarted.countDown();
+            finishTask.await(2, TimeUnit.SECONDS);
+            return Optional.of(track);
+        });
+
+        // Subclass repository so renewLease throws a transient database exception on heartbeat
+        OpenMusicImportRepository failingRepo = new OpenMusicImportRepository(jdbc) {
+            @Override
+            public boolean renewLease(UUID itemId, String workerId, Duration leaseDuration) {
+                throw new org.springframework.dao.DataAccessResourceFailureException("Simulated transient connection failure");
+            }
+        };
+
+        OpenMusicImportWorker workerA = new OpenMusicImportWorker(
+                failingRepo, songRepository, indexingService, mockClient,
+                Duration.ofMillis(30), Duration.ofMillis(100)
+        );
+
+        String workerAId = "worker-A-db-err";
+        Optional<QueuedImportItem> claimed = repository.claimNextPending(workerAId, Duration.ofMillis(200));
+        assertTrue(claimed.isPresent());
+        QueuedImportItem item = claimed.get();
+
+        CountDownLatch workerFinished = new CountDownLatch(1);
+        AtomicReference<Exception> workerError = new AtomicReference<>();
+        Thread workerThread = new Thread(() -> {
+            try {
+                workerA.processClaimedItem(item, workerAId);
+            } catch (Exception ex) {
+                workerError.set(ex);
+            } finally {
+                workerFinished.countDown();
+            }
+        });
+        workerThread.start();
+
+        // Wait until worker enters task
+        assertTrue(trackFetchStarted.await(1, TimeUnit.SECONDS));
+
+        // Allow worker to proceed after heartbeat throws DB exception
+        Thread.sleep(60); // let heartbeat tick and trigger the DB exception
+        finishTask.countDown();
+
+        assertTrue(workerFinished.await(3, TimeUnit.SECONDS));
+        workerA.shutdown();
+
+        // The item must NOT be marked FAILED! It should remain in PROCESSING status
+        String status = jdbc.queryForObject(
+                "SELECT status FROM open_music_import_items WHERE id = ?", String.class, item.id());
+        assertEquals("PROCESSING", status, "Item must remain in PROCESSING, not marked FAILED");
+
+        // The job status must NOT be transitioned to COMPLETED_WITH_ERRORS or CANCELLED
+        String jobStatus = jdbc.queryForObject(
+                "SELECT status FROM open_music_import_jobs WHERE id = ?", String.class, jobId);
+        assertEquals("RUNNING", jobStatus);
+
+        // Now simulate the passage of time so the lease expires naturally
+        jdbc.update("UPDATE open_music_import_items SET lease_until = ?",
+                java.sql.Timestamp.from(Instant.now().minus(Duration.ofMinutes(1))));
+
+        // Stale recovery safely reclaims the abandoned item back to PENDING
+        int recovered = repository.recoverStaleProcessing(Duration.ofMillis(10));
+        assertEquals(1, recovered, "Expired abandoned item must be recovered by stale recovery");
+
+        String statusRecovered = jdbc.queryForObject(
+                "SELECT status FROM open_music_import_items WHERE id = ?", String.class, item.id());
+        assertEquals("PENDING", statusRecovered, "Item should be recovered to PENDING");
+    }
+
+    @Test
+    @DisplayName("Reconciliation prevents duplicate catalogue entries when retrying after aborted processing")
+    void testReconciliationPreventsDuplicateOnRetryAfterHeartbeatFailure() {
+        // Pre-index the song in Amber catalogue to simulate an earlier partial or duplicate index
+        com.amber.song.SongSourceMetadata provenance = new com.amber.song.SongSourceMetadata(
+                "jamendo", "804", "https://jamendo.com/track/804",
+                "https://creativecommons.org/licenses/by/4.0/", "Attribution 804", "fakehash804");
+        Song savedSong = songRepository.saveFromSource(new Song("Duplicate Track", "Artist", 120000), provenance);
+        assertNotNull(savedSong.id());
+
+        JamendoTrack track = new JamendoTrack("804", "Duplicate Track", "Artist", "Album", 120,
+                "https://storage.jamendo.com/804.mp3", "https://jamendo.com/track/804",
+                "https://creativecommons.org/licenses/by/4.0/", "Attribution 804");
+
+        UUID jobId = repository.createJob(List.of(track));
+        String workerId = repository.getInstanceId();
+        Optional<QueuedImportItem> claimed = repository.claimNextPending(workerId, Duration.ofMinutes(1));
+        assertTrue(claimed.isPresent());
+
+        JamendoClient mockClient = Mockito.mock(JamendoClient.class);
+        OpenMusicImportWorker worker = new OpenMusicImportWorker(
+                repository, songRepository, indexingService, mockClient,
+                Duration.ofSeconds(10), Duration.ofMinutes(1)
+        );
+
+        // Processing should detect already indexed source track and mark SKIPPED without creating duplicates
+        worker.processClaimedItem(claimed.get(), workerId);
+        worker.shutdown();
+
+        String itemStatus = jdbc.queryForObject(
+                "SELECT status FROM open_music_import_items WHERE id = ?", String.class, claimed.get().id());
+        assertEquals("SKIPPED", itemStatus);
+
+        // Verify count of songs with external ID 804 is strictly 1
+        Integer songCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM songs WHERE source_provider = 'jamendo' AND source_track_id = '804'", Integer.class);
+        assertEquals(1, songCount, "Duplicate song must not be inserted");
+    }
 }

@@ -145,7 +145,10 @@ public class OpenMusicImportWorker {
                     log.debug("Worker {} renewed lease for item {}", workerId, item.id());
                 }
             } catch (Exception ex) {
-                log.warn("Error renewing lease for item {}: {}", item.id(), ex.getMessage());
+                log.warn("Database error renewing lease for item {}; treating ownership as unverified: {}",
+                        item.id(), ex.getMessage());
+                ownershipLost.set(true);
+                workerThread.interrupt();
             }
         }, heartbeatInterval.toMillis(), heartbeatInterval.toMillis(), TimeUnit.MILLISECONDS);
 
@@ -155,8 +158,8 @@ public class OpenMusicImportWorker {
         } catch (Exception ex) {
             interrupted = ex instanceof InterruptedException || Thread.interrupted();
             if (ownershipLost.get()) {
-                log.warn("Worker {} aborted processing track id {} because lease was lost to another worker; " +
-                        "leaving queue state untouched.", workerId, item.externalTrackId());
+                log.warn("Worker {} aborted processing track id {} because lease ownership was lost or could not be verified; " +
+                        "leaving queue state untouched so lease can expire naturally.", workerId, item.externalTrackId());
             } else {
                 log.warn("Open music import failed for track id {}: {}", item.externalTrackId(), ex.getMessage());
                 importRepository.markItem(item.id(), workerId, "FAILED", safeMessage(ex), null, null, null);
