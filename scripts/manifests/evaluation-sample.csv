@@ -1,3 +1,5 @@
+# AMBER RECOGNITION EVALUATION TEMPLATE — EXAMPLES ONLY
+# WARNING: Placeholder evaluation fixtures for demonstration. Reference tracks must be pre-indexed in Amber.
 query_path,expected_title,expected_artist,expected_offset_ms,label
 excerpts/acoustic_breeze_crop3s.wav,Acoustic Breeze,Benjamin Tissot,3000,clean-crop-3s
 excerpts/acoustic_breeze_crop10s.wav,Acoustic Breeze,Benjamin Tissot,10000,clean-crop-10s

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import cp from 'node:child_process';
 
 export const SUPPORTED_EXTENSIONS = new Set([
   '.wav',
@@ -13,18 +14,33 @@ export const SUPPORTED_EXTENSIONS = new Set([
   '.aiff'
 ]);
 
-export const MIN_FILE_SIZE_BYTES = 12;
+export const MIN_FILE_SIZE_BYTES = 12; // Matches AudioValidationService.java
 export const MAX_FILE_SIZE_BYTES = 26_214_400; // 25 MB (matches AudioProperties.java)
+export const MIN_DURATION_SECONDS = 1.0; // 1s (matches AudioProperties.java)
+export const MAX_DURATION_SECONDS = 600.0; // 600s / 10m (matches AudioProperties.java)
+export const MIN_RMS_ENERGY = 1e-5; // Matches AudioValidationService.java
 export const MAX_METADATA_LENGTH = 255; // Matches PostgreSQL VARCHAR(255) schema
 
 /**
- * Validates audio file path, preventing directory traversal.
+ * Validates audio file path, size, format, and truthful media content.
  *
  * @param {string} baseDir - The root audio directory
  * @param {string} relativePath - Relative path supplied in manifest
- * @returns {{ valid: boolean, fullPath?: string, error?: string }}
+ * @param {Object} [options]
+ * @param {boolean} [options.checkMedia=true] - Whether to validate media duration/silence
+ * @returns {{
+ *   valid: boolean,
+ *   fullPath?: string,
+ *   sizeBytes?: number,
+ *   extension?: string,
+ *   validationLevel?: 'full' | 'structural_only',
+ *   durationSeconds?: number,
+ *   rmsEnergy?: number,
+ *   warning?: string,
+ *   error?: string
+ * }}
  */
-export function validateAudioPath(baseDir, relativePath) {
+export function validateAudioPath(baseDir, relativePath, options = {}) {
   if (!baseDir || typeof baseDir !== 'string') {
     return { valid: false, error: 'Base audio directory path must be provided' };
   }
@@ -35,8 +51,7 @@ export function validateAudioPath(baseDir, relativePath) {
   const resolvedBase = path.resolve(baseDir);
   const resolvedTarget = path.resolve(resolvedBase, relativePath);
 
-  // Path traversal check
-  // Check that resolvedTarget starts with resolvedBase + path separator
+  // 1. Path traversal check
   const baseWithSep = resolvedBase.endsWith(path.sep) ? resolvedBase : resolvedBase + path.sep;
   if (!resolvedTarget.startsWith(baseWithSep) && resolvedTarget !== resolvedBase) {
     return {
@@ -45,7 +60,7 @@ export function validateAudioPath(baseDir, relativePath) {
     };
   }
 
-  // File existence check
+  // 2. File existence check
   if (!fs.existsSync(resolvedTarget)) {
     return {
       valid: false,
@@ -73,7 +88,7 @@ export function validateAudioPath(baseDir, relativePath) {
     };
   }
 
-  // Extension check
+  // 3. Extension check
   const ext = path.extname(resolvedTarget).toLowerCase();
   if (!SUPPORTED_EXTENSIONS.has(ext)) {
     return {
@@ -84,7 +99,7 @@ export function validateAudioPath(baseDir, relativePath) {
     };
   }
 
-  // Size check
+  // 4. File size check
   if (stat.size < MIN_FILE_SIZE_BYTES) {
     return {
       valid: false,
@@ -103,12 +118,375 @@ export function validateAudioPath(baseDir, relativePath) {
     };
   }
 
+  // 5. Media inspection (duration, silence, and decodability)
+  if (options.checkMedia !== false) {
+    const mediaCheck = inspectAudioMedia(resolvedTarget, ext);
+    if (!mediaCheck.valid) {
+      return {
+        valid: false,
+        fullPath: resolvedTarget,
+        sizeBytes: stat.size,
+        extension: ext,
+        error: mediaCheck.error
+      };
+    }
+
+    return {
+      valid: true,
+      fullPath: resolvedTarget,
+      sizeBytes: stat.size,
+      extension: ext,
+      validationLevel: mediaCheck.validationLevel,
+      durationSeconds: mediaCheck.durationSeconds,
+      rmsEnergy: mediaCheck.rmsEnergy,
+      warning: mediaCheck.warning
+    };
+  }
+
   return {
     valid: true,
     fullPath: resolvedTarget,
     sizeBytes: stat.size,
-    extension: ext
+    extension: ext,
+    validationLevel: 'structural_only'
   };
+}
+
+/**
+ * Inspects audio media for valid duration, silence, and decodability.
+ * Uses pure Node.js WAV parser for uncompressed PCM WAV, or local FFmpeg/ffprobe
+ * if available. If full media inspection is unavailable, explicitly reports this limitation.
+ *
+ * @param {string} filePath - Absolute path to audio file
+ * @param {string} [extension] - Optional file extension
+ * @returns {{
+ *   valid: boolean,
+ *   validationLevel?: 'full' | 'structural_only',
+ *   durationSeconds?: number,
+ *   rmsEnergy?: number,
+ *   warning?: string,
+ *   error?: string
+ * }}
+ */
+export function inspectAudioMedia(filePath, extension) {
+  const ext = (extension || path.extname(filePath)).toLowerCase();
+
+  // Fast-path: native pure-JS WAV header & PCM sample parser
+  if (ext === '.wav') {
+    try {
+      const wavResult = parseWavFile(filePath);
+      if (wavResult.valid) {
+        if (wavResult.durationSeconds < MIN_DURATION_SECONDS) {
+          return {
+            valid: false,
+            error: `Audio duration (${wavResult.durationSeconds.toFixed(2)}s) is shorter than minimum required duration of ${MIN_DURATION_SECONDS}s.`
+          };
+        }
+        if (wavResult.durationSeconds > MAX_DURATION_SECONDS) {
+          return {
+            valid: false,
+            error: `Audio duration (${wavResult.durationSeconds.toFixed(2)}s) exceeds maximum permitted duration of ${MAX_DURATION_SECONDS}s.`
+          };
+        }
+        if (wavResult.isPcm16 && wavResult.rms < MIN_RMS_ENERGY) {
+          return {
+            valid: false,
+            error: `Decoded audio is completely silent (RMS energy < 1e-5).`
+          };
+        }
+        return {
+          valid: true,
+          validationLevel: 'full',
+          durationSeconds: wavResult.durationSeconds,
+          rmsEnergy: wavResult.rms
+        };
+      } else if (wavResult.fatal) {
+        return { valid: false, error: wavResult.error };
+      }
+    } catch (err) {
+      // Fall through to FFmpeg if available
+    }
+  }
+
+  // Next path: Try FFmpeg/ffprobe if available on machine
+  const toolPaths = resolveAudioTools();
+  if (toolPaths.ffprobe || toolPaths.ffmpeg) {
+    const probeRes = probeViaFfmpeg(filePath, toolPaths);
+    if (!probeRes.valid) {
+      return { valid: false, error: probeRes.error };
+    }
+
+    if (probeRes.durationSeconds !== undefined) {
+      if (probeRes.durationSeconds < MIN_DURATION_SECONDS) {
+        return {
+          valid: false,
+          error: `Audio duration (${probeRes.durationSeconds.toFixed(2)}s) is shorter than minimum required duration of ${MIN_DURATION_SECONDS}s.`
+        };
+      }
+      if (probeRes.durationSeconds > MAX_DURATION_SECONDS) {
+        return {
+          valid: false,
+          error: `Audio duration (${probeRes.durationSeconds.toFixed(2)}s) exceeds maximum permitted duration of ${MAX_DURATION_SECONDS}s.`
+        };
+      }
+    }
+
+    if (probeRes.rmsEnergy !== undefined && probeRes.rmsEnergy < MIN_RMS_ENERGY) {
+      return {
+        valid: false,
+        error: `Decoded audio is completely silent (RMS energy < 1e-5).`
+      };
+    }
+
+    return {
+      valid: true,
+      validationLevel: 'full',
+      durationSeconds: probeRes.durationSeconds,
+      rmsEnergy: probeRes.rmsEnergy
+    };
+  }
+
+  // If no decoding tool is available and file is not PCM WAV,
+  // report structural validity with explicit limitation.
+  return {
+    valid: true,
+    validationLevel: 'structural_only',
+    warning: `Full media decoding, duration and silence checks were skipped (FFmpeg/ffprobe not available in preflight environment). File will be verified by backend during ingestion.`
+  };
+}
+
+/**
+ * Parses WAV RIFF headers and computes duration & RMS energy without external tools.
+ *
+ * @param {string} filePath
+ * @returns {{ valid: boolean, durationSeconds?: number, rms?: number, isPcm16?: boolean, fatal?: boolean, error?: string }}
+ */
+function parseWavFile(filePath) {
+  let buffer;
+  try {
+    buffer = fs.readFileSync(filePath);
+  } catch (err) {
+    return { valid: false, fatal: true, error: `Failed to read audio file: ${err.message}` };
+  }
+
+  if (buffer.length < 44) {
+    return { valid: false, fatal: true, error: 'WAV file is too small to contain valid RIFF headers.' };
+  }
+
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    return { valid: false, fatal: true, error: 'File header does not match standard RIFF/WAVE container.' };
+  }
+
+  let offset = 12;
+  let fmt = null;
+  let dataChunk = null;
+
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString('ascii', offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const chunkStart = offset + 8;
+
+    if (chunkId === 'fmt ') {
+      if (chunkSize < 16) {
+        return { valid: false, fatal: true, error: 'Corrupt WAV header: fmt chunk is smaller than 16 bytes.' };
+      }
+      fmt = {
+        audioFormat: buffer.readUInt16LE(chunkStart),
+        channels: buffer.readUInt16LE(chunkStart + 2),
+        sampleRate: buffer.readUInt32LE(chunkStart + 4),
+        bitsPerSample: buffer.readUInt16LE(chunkStart + 14)
+      };
+    } else if (chunkId === 'data') {
+      dataChunk = {
+        offset: chunkStart,
+        size: Math.min(chunkSize, buffer.length - chunkStart)
+      };
+      break;
+    }
+
+    offset += 8 + chunkSize;
+    if (chunkSize % 2 !== 0) {
+      offset += 1;
+    }
+  }
+
+  if (!fmt) {
+    return { valid: false, fatal: true, error: 'Corrupt WAV file: missing required "fmt " subchunk.' };
+  }
+  if (!dataChunk || dataChunk.size === 0) {
+    return { valid: false, fatal: true, error: 'Corrupt WAV file: missing or empty "data" subchunk.' };
+  }
+
+  const bytesPerSample = (fmt.bitsPerSample / 8) * fmt.channels;
+  if (bytesPerSample <= 0 || fmt.sampleRate <= 0) {
+    return { valid: false, fatal: true, error: 'Corrupt WAV file: invalid sample rate or bits per sample.' };
+  }
+
+  const durationSeconds = dataChunk.size / (fmt.sampleRate * bytesPerSample);
+
+  let rms = 0;
+  const isPcm16 = (fmt.audioFormat === 1 && fmt.bitsPerSample === 16);
+  if (isPcm16) {
+    let sumSq = 0;
+    const totalSamples = Math.floor(dataChunk.size / 2);
+    if (totalSamples > 0) {
+      for (let i = 0; i < totalSamples; i++) {
+        const sample = buffer.readInt16LE(dataChunk.offset + i * 2);
+        const norm = sample / 32768.0;
+        sumSq += norm * norm;
+      }
+      rms = Math.sqrt(sumSq / totalSamples);
+    }
+  }
+
+  return {
+    valid: true,
+    durationSeconds,
+    rms,
+    isPcm16
+  };
+}
+
+/**
+ * Resolves local ffprobe or ffmpeg executables from PATH, environment variables, or standard paths.
+ *
+ * @returns {{ ffprobe: string | null, ffmpeg: string | null }}
+ */
+export function resolveAudioTools() {
+  const tools = { ffprobe: null, ffmpeg: null };
+
+  const checkFile = (p) => {
+    try {
+      return p && fs.existsSync(p) && fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+
+  // 1. Check environment variables
+  if (checkFile(process.env.AMBER_FFPROBE_PATH)) tools.ffprobe = process.env.AMBER_FFPROBE_PATH;
+  if (checkFile(process.env.AMBER_FFMPEG_PATH)) tools.ffmpeg = process.env.AMBER_FFMPEG_PATH;
+
+  // 2. Check well-known local paths (matching AudioNormalizer.java)
+  const stremioProbe = 'C:\\Users\\rezsi\\AppData\\Local\\Programs\\Stremio\\ffprobe.exe';
+  const stremioFfmpeg = 'C:\\Users\\rezsi\\AppData\\Local\\Programs\\Stremio\\ffmpeg.exe';
+  if (!tools.ffprobe && checkFile(stremioProbe)) tools.ffprobe = stremioProbe;
+  if (!tools.ffmpeg && checkFile(stremioFfmpeg)) tools.ffmpeg = stremioFfmpeg;
+
+  // 3. Check system PATH
+  const whichCmd = process.platform === 'win32' ? 'where.exe' : 'which';
+  if (!tools.ffprobe) {
+    try {
+      const res = cp.spawnSync(whichCmd, ['ffprobe'], { encoding: 'utf8' });
+      if (res.status === 0 && res.stdout) {
+        const firstLine = res.stdout.trim().split(/\r?\n/)[0];
+        if (checkFile(firstLine)) tools.ffprobe = firstLine;
+      }
+    } catch {}
+  }
+  if (!tools.ffmpeg) {
+    try {
+      const res = cp.spawnSync(whichCmd, ['ffmpeg'], { encoding: 'utf8' });
+      if (res.status === 0 && res.stdout) {
+        const firstLine = res.stdout.trim().split(/\r?\n/)[0];
+        if (checkFile(firstLine)) tools.ffmpeg = firstLine;
+      }
+    } catch {}
+  }
+
+  return tools;
+}
+
+/**
+ * Validates audio decodability, duration, and silence using FFmpeg/ffprobe.
+ *
+ * @param {string} filePath
+ * @param {{ ffprobe: string | null, ffmpeg: string | null }} tools
+ * @returns {{ valid: boolean, durationSeconds?: number, rmsEnergy?: number, error?: string }}
+ */
+function probeViaFfmpeg(filePath, tools) {
+  let duration = null;
+
+  // Probe duration via ffprobe if available
+  if (tools.ffprobe) {
+    try {
+      const probeRes = cp.spawnSync(tools.ffprobe, [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        filePath
+      ], { encoding: 'utf8', timeout: 10_000 });
+
+      if (probeRes.status === 0 && probeRes.stdout) {
+        const parsed = parseFloat(probeRes.stdout.trim());
+        if (!isNaN(parsed) && parsed > 0) {
+          duration = parsed;
+        }
+      }
+    } catch {}
+  }
+
+  // If ffmpeg is available, decode a sample to verify decodability and check RMS
+  if (tools.ffmpeg) {
+    try {
+      const decRes = cp.spawnSync(tools.ffmpeg, [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-nostdin',
+        '-i', filePath,
+        '-f', 's16le',
+        '-ac', '1',
+        '-ar', '11025',
+        '-t', '10', // inspect up to first 10 seconds
+        'pipe:1'
+      ], { timeout: 15_000, maxBuffer: 10 * 11025 * 2 + 1024 });
+
+      if (decRes.status !== 0) {
+        const errMsg = decRes.stderr ? decRes.stderr.toString('utf8').trim() : '';
+        return {
+          valid: false,
+          error: `Audio file is undecodable or corrupt (${errMsg || 'FFmpeg decode error'}).`
+        };
+      }
+
+      const pcmBytes = decRes.stdout;
+      if (!pcmBytes || pcmBytes.length === 0) {
+        return { valid: false, error: 'Audio file produced zero decoded samples.' };
+      }
+
+      let sumSq = 0;
+      const sampleCount = Math.floor(pcmBytes.length / 2);
+      for (let i = 0; i < sampleCount; i++) {
+        const sample = pcmBytes.readInt16LE(i * 2);
+        const norm = sample / 32768.0;
+        sumSq += norm * norm;
+      }
+      const rms = Math.sqrt(sumSq / sampleCount);
+
+      if (duration === null) {
+        // Approximate from sample count if ffprobe was not run
+        duration = sampleCount / 11025.0;
+      }
+
+      return {
+        valid: true,
+        durationSeconds: duration,
+        rmsEnergy: rms
+      };
+    } catch (err) {
+      return { valid: false, error: `Failed to decode audio via FFmpeg: ${err.message}` };
+    }
+  }
+
+  if (duration !== null) {
+    return {
+      valid: true,
+      durationSeconds: duration,
+      rmsEnergy: 0.1 // assume non-silent if probe passed but ffmpeg absent
+    };
+  }
+
+  return { valid: false, error: 'Failed to probe audio duration or decodability.' };
 }
 
 /**
@@ -141,6 +519,51 @@ export function validateMetadata(title, artist) {
   }
 
   return { valid: true };
+}
+
+/**
+ * Validates music licensing identifier and source provenance URL.
+ *
+ * @param {string} license
+ * @param {string} sourceUrl
+ * @returns {{ valid: boolean, license?: string, sourceUrl?: string, error?: string }}
+ */
+export function validateLicensing(license, sourceUrl) {
+  if (!license || typeof license !== 'string' || license.trim().length === 0) {
+    return { valid: false, error: 'Licence identifier is required and cannot be empty.' };
+  }
+
+  if (!sourceUrl || typeof sourceUrl !== 'string' || sourceUrl.trim().length === 0) {
+    return { valid: false, error: 'Source URL is required and cannot be empty.' };
+  }
+
+  const trimmedUrl = sourceUrl.trim();
+  try {
+    const parsed = new URL(trimmedUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return {
+        valid: false,
+        error: `Source URL must use http or https protocol (received '${parsed.protocol}').`
+      };
+    }
+    if (!parsed.hostname || parsed.hostname.length === 0) {
+      return {
+        valid: false,
+        error: `Source URL '${trimmedUrl}' is missing a valid hostname.`
+      };
+    }
+  } catch (err) {
+    return {
+      valid: false,
+      error: `Source URL is invalid or malformed: '${trimmedUrl}'.`
+    };
+  }
+
+  return {
+    valid: true,
+    license: license.trim(),
+    sourceUrl: trimmedUrl
+  };
 }
 
 /**

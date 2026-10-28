@@ -7,18 +7,24 @@
  * the existing REST upload API (POST /api/v1/songs).
  *
  * Defaults to safe Dry Run mode unless --execute is explicitly passed.
+ * Fails closed if catalogue duplicate check cannot be verified.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { parseCsv } from './lib/csv-parser.mjs';
-import { validateAudioPath, validateMetadata, normalizeTrackKey } from './lib/audio-validator.mjs';
+import {
+  validateAudioPath,
+  validateMetadata,
+  validateLicensing,
+  normalizeTrackKey
+} from './lib/audio-validator.mjs';
 import { AmberClient } from './lib/amber-client.mjs';
 
 const REQUIRED_COLUMNS = ['relative_path', 'title', 'artist', 'license', 'source_url'];
 
-export async function runBulkImport(cliArgs = process.argv.slice(2)) {
+export async function runBulkImport(cliArgs = process.argv.slice(2), testOverrides = {}) {
   const options = {
     'audio-dir': { type: 'string', short: 'd' },
     'manifest': { type: 'string', short: 'm' },
@@ -88,11 +94,12 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
     return { exitCode: 1 };
   }
 
-  const client = new AmberClient({
+  const client = testOverrides.client || new AmberClient({
     apiUrl,
     adminApiKey: adminKey,
     timeoutMs,
-    maxRetries
+    maxRetries,
+    customFetch: testOverrides.customFetch
   });
 
   console.log('='.repeat(78));
@@ -124,15 +131,17 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
   }
 
   if (rows.length === 0) {
-    console.log('Manifest is empty (no track rows found). Exiting.');
+    console.log('Manifest contains no track entries. Exiting.');
     return { exitCode: 0 };
   }
 
   console.log(`Parsed ${rows.length} track entry(s) from manifest.`);
 
-  // 2. Fetch existing catalogue for duplicate detection
+  // 2. Fetch existing catalogue for duplicate detection (FAIL-CLOSED SAFETY)
   console.log('Querying current Amber catalogue for existing tracks...');
   const catalogueMap = new Map();
+  let catalogueFetchError = null;
+
   try {
     const existingSongs = await client.fetchCatalogue();
     console.log(`Found ${existingSongs.length} indexed track(s) in database.`);
@@ -141,10 +150,35 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
       catalogueMap.set(key, song);
     }
   } catch (err) {
-    console.warn(`Warning: Could not fetch catalogue for duplicate check (${err.message}).`);
-    if (isExecute) {
-      console.warn('Proceeding with import, but duplicate detection against database is unavailable.');
-    }
+    catalogueFetchError = err;
+    console.warn(`Warning: Could not retrieve existing catalogue: ${client.redact(err.message)}`);
+  }
+
+  // In EXECUTE mode, fail closed immediately if duplicate protection cannot be verified
+  if (isExecute && !allowDuplicates && catalogueFetchError) {
+    const failureExplanation = `Duplicate protection could not be verified because catalogue retrieval failed: ${client.redact(catalogueFetchError.message)}. Aborting import before any uploads are sent.`;
+    console.error(`\nFatal Error: ${failureExplanation}`);
+
+    const abortReport = {
+      timestamp: new Date().toISOString(),
+      mode: 'execute',
+      apiUrl,
+      audioDir: path.resolve(audioDir),
+      manifestPath: path.resolve(manifestPath),
+      status: 'ABORTED',
+      error: client.redact(catalogueFetchError.message),
+      reason: failureExplanation,
+      summary: {
+        total: rows.length,
+        successful: 0,
+        failed: 0,
+        skipped: 0,
+        invalid: 0
+      },
+      results: []
+    };
+    saveReport(reportPath, abortReport);
+    return { exitCode: 1, error: failureExplanation, report: abortReport };
   }
 
   // 3. Load previous report if resuming
@@ -155,7 +189,9 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
       if (Array.isArray(prevData.results)) {
         for (const item of prevData.results) {
           if (item.status === 'SUCCESS' || item.status === 'SKIPPED') {
-            previousResults.set(item.relativePath, item);
+            const trackKey = normalizeTrackKey(item.title, item.artist);
+            const compositeKey = `${item.relativePath}::${trackKey}`;
+            previousResults.set(compositeKey, item);
           }
         }
         console.log(`Resuming from existing report: ${previousResults.size} item(s) already completed.`);
@@ -174,18 +210,23 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
     const relPath = row.relative_path || '';
     const title = row.title || '';
     const artist = row.artist || '';
+    const license = row.license || '';
+    const sourceUrl = row.source_url || '';
 
-    // If resumed item is already successful
-    if (previousResults.has(relPath)) {
-      const prev = previousResults.get(relPath);
+    const rowTrackKey = normalizeTrackKey(title, artist);
+    const resumeKey = `${relPath}::${rowTrackKey}`;
+
+    // If resumed item is already successful or skipped, preserve without re-uploading
+    if (previousResults.has(resumeKey)) {
+      const prev = previousResults.get(resumeKey);
       plan.push({
         index: i + 1,
         rowNum: row.__rowNum,
         relativePath: relPath,
         title,
         artist,
-        license: row.license || '',
-        sourceUrl: row.source_url || '',
+        license: license.trim() || prev.license || '',
+        sourceUrl: sourceUrl.trim() || prev.sourceUrl || '',
         status: prev.status,
         reason: `Preserved from previous run (${prev.reason || 'Completed'})`,
         fullPath: prev.fullPath || path.resolve(audioDir, relPath),
@@ -195,7 +236,7 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
       continue;
     }
 
-    // Path validation & Traversal protection
+    // Path validation & Traversal protection & Media preflight
     const pathCheck = validateAudioPath(audioDir, relPath);
     if (!pathCheck.valid) {
       plan.push({
@@ -204,8 +245,8 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
         relativePath: relPath,
         title,
         artist,
-        license: row.license || '',
-        sourceUrl: row.source_url || '',
+        license: license.trim(),
+        sourceUrl: sourceUrl.trim(),
         status: 'INVALID',
         reason: pathCheck.error,
         fullPath: pathCheck.fullPath || null
@@ -222,10 +263,28 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
         relativePath: relPath,
         title,
         artist,
-        license: row.license || '',
-        sourceUrl: row.source_url || '',
+        license: license.trim(),
+        sourceUrl: sourceUrl.trim(),
         status: 'INVALID',
         reason: metaCheck.error,
+        fullPath: pathCheck.fullPath
+      });
+      continue;
+    }
+
+    // Licensing validation
+    const licenseCheck = validateLicensing(license, sourceUrl);
+    if (!licenseCheck.valid) {
+      plan.push({
+        index: i + 1,
+        rowNum: row.__rowNum,
+        relativePath: relPath,
+        title,
+        artist,
+        license: license.trim(),
+        sourceUrl: sourceUrl.trim(),
+        status: 'INVALID',
+        reason: licenseCheck.error,
         fullPath: pathCheck.fullPath
       });
       continue;
@@ -242,8 +301,8 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
         relativePath: relPath,
         title,
         artist,
-        license: row.license || '',
-        sourceUrl: row.source_url || '',
+        license: licenseCheck.license,
+        sourceUrl: licenseCheck.sourceUrl,
         status: 'SKIPPED',
         reason: `Duplicate track in manifest batch ("${title}" by "${artist}")`,
         fullPath: pathCheck.fullPath
@@ -261,11 +320,33 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
         relativePath: relPath,
         title,
         artist,
-        license: row.license || '',
-        sourceUrl: row.source_url || '',
+        license: licenseCheck.license,
+        sourceUrl: licenseCheck.sourceUrl,
         status: 'SKIPPED',
         reason: `Already indexed in catalogue (ID: ${existing.id}, "${existing.title}" by "${existing.artist}")`,
         fullPath: pathCheck.fullPath
+      });
+      continue;
+    }
+
+    // If catalogue was unreachable in dry-run mode, mark duplicate status as UNKNOWN
+    if (!allowDuplicates && catalogueFetchError) {
+      plan.push({
+        index: i + 1,
+        rowNum: row.__rowNum,
+        relativePath: relPath,
+        title: title.trim(),
+        artist: artist.trim(),
+        license: licenseCheck.license,
+        sourceUrl: licenseCheck.sourceUrl,
+        status: 'UNKNOWN',
+        duplicateStatus: 'UNKNOWN',
+        reason: `Duplicate protection could not be verified (catalogue query failed: ${client.redact(catalogueFetchError.message)})`,
+        fullPath: pathCheck.fullPath,
+        sizeBytes: pathCheck.sizeBytes,
+        validationLevel: pathCheck.validationLevel,
+        durationSeconds: pathCheck.durationSeconds,
+        mediaWarning: pathCheck.warning || null
       });
       continue;
     }
@@ -277,17 +358,22 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
       relativePath: relPath,
       title: title.trim(),
       artist: artist.trim(),
-      license: row.license || '',
-      sourceUrl: row.source_url || '',
+      license: licenseCheck.license,
+      sourceUrl: licenseCheck.sourceUrl,
       status: 'PENDING',
+      duplicateStatus: 'VERIFIED_NEW',
       reason: 'Valid for ingestion',
       fullPath: pathCheck.fullPath,
-      sizeBytes: pathCheck.sizeBytes
+      sizeBytes: pathCheck.sizeBytes,
+      validationLevel: pathCheck.validationLevel,
+      durationSeconds: pathCheck.durationSeconds,
+      mediaWarning: pathCheck.warning || null
     });
   }
 
   // Print planning overview
   const validPending = plan.filter(p => p.status === 'PENDING');
+  const unknownItems = plan.filter(p => p.status === 'UNKNOWN');
   const invalidItems = plan.filter(p => p.status === 'INVALID');
   const skippedItems = plan.filter(p => p.status === 'SKIPPED');
   const previousDone = plan.filter(p => p.status === 'SUCCESS');
@@ -296,6 +382,9 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
   console.log(`- Total Manifest Entries : ${plan.length}`);
   console.log(`- Ready for Ingestion    : ${validPending.length}`);
   console.log(`- Skipped (Duplicates)   : ${skippedItems.length}`);
+  if (unknownItems.length > 0) {
+    console.log(`- Unknown Duplicate State: ${unknownItems.length} (Catalogue unavailable)`);
+  }
   console.log(`- Invalid Entries        : ${invalidItems.length}`);
   if (previousDone.length > 0) {
     console.log(`- Resumed (Completed)    : ${previousDone.length}`);
@@ -305,6 +394,13 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
     console.log('\nInvalid Entries:');
     for (const inv of invalidItems) {
       console.log(`  [Row ${inv.rowNum}] ${inv.relativePath}: ${inv.reason}`);
+    }
+  }
+
+  if (unknownItems.length > 0) {
+    console.log('\nUnknown Duplicate Status (Catalogue Unreachable):');
+    for (const unk of unknownItems) {
+      console.log(`  [Row ${unk.rowNum}] "${unk.title}" by "${unk.artist}": ${unk.reason}`);
     }
   }
 
@@ -319,8 +415,13 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
   if (!isExecute) {
     console.log('\n' + '='.repeat(78));
     console.log(' *** DRY RUN COMPLETE: 0 tracks uploaded. ***');
-    console.log(` Actions that would be taken: ${validPending.length} track(s) would be uploaded.`);
-    console.log(' To execute these uploads, run with --execute and ensure AMBER_ADMIN_API_KEY is set.');
+    if (catalogueFetchError) {
+      console.log(' WARNING: Duplicate status is UNKNOWN because catalogue could not be retrieved.');
+      console.log(' Never assume duplicate protection succeeded when the catalogue check fails.');
+    } else {
+      console.log(` Actions that would be taken: ${validPending.length} track(s) would be uploaded.`);
+    }
+    console.log(' To execute uploads, run with --execute and ensure AMBER_ADMIN_API_KEY is configured.');
     console.log('='.repeat(78));
 
     const dryRunReport = {
@@ -329,9 +430,12 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
       apiUrl,
       audioDir: path.resolve(audioDir),
       manifestPath: path.resolve(manifestPath),
+      catalogueStatus: catalogueFetchError ? 'UNAVAILABLE' : 'VERIFIED',
+      catalogueError: catalogueFetchError ? client.redact(catalogueFetchError.message) : null,
       summary: {
         total: plan.length,
         ready: validPending.length,
+        unknownDuplicates: unknownItems.length,
         skipped: skippedItems.length,
         invalid: invalidItems.length
       },
@@ -374,6 +478,10 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
       item.reason = `Upload failed: ${item.error}`;
       failCount++;
       console.log(`✗ FAILED: ${item.error}`);
+
+      if (err.message?.includes('timed out') || err.name === 'AbortError') {
+        console.warn('  [Notice] Upload request timed out. Outcome is uncertain as API lacks idempotency keys.');
+      }
     }
 
     // Save incremental progress after each item for resume capability
@@ -383,6 +491,7 @@ export async function runBulkImport(cliArgs = process.argv.slice(2)) {
       apiUrl,
       audioDir: path.resolve(audioDir),
       manifestPath: path.resolve(manifestPath),
+      catalogueStatus: 'VERIFIED',
       summary: {
         total: plan.length,
         successful: successCount + previousDone.length,
@@ -447,9 +556,11 @@ CSV Manifest Format:
   relative_path,title,artist,license,source_url
   track1.wav,Midnight Rain,Acoustic Duo,CC-BY-4.0,https://example.org/audio1.wav
 
-Security Note:
-  When using --execute, the administrative key must be supplied via the
-  AMBER_ADMIN_API_KEY environment variable. Secrets are never logged or stored.
+Safety Features:
+  - Fails closed in --execute mode if catalogue duplicate detection fails.
+  - Strict preflight media validation (format, duration bounds [1s, 600s], RMS non-silence >= 1e-5).
+  - Mandatory licensing metadata (license ID and valid HTTP/HTTPS source URL).
+  - Resumable: Completed items are never blindly re-uploaded.
 `);
 }
 

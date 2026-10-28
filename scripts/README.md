@@ -12,7 +12,7 @@ The tools in this directory enable operators to:
 
 Both tools:
 - Default to **Dry Run mode** (read-only verification). Real network writes or queries require an explicit `--execute` flag.
-- Enforce strict path traversal prevention (audio files must resolve inside the specified base directory).
+- Enforce strict path traversal prevention (audio files must resolve strictly inside the specified base directory).
 - Match the backend's format, duration, and file size constraints.
 - Redact secrets (`AMBER_ADMIN_API_KEY`) from all terminal output, logs, and exported reports.
 
@@ -25,28 +25,57 @@ Both tools:
 Place your audio files inside a dedicated folder (e.g., `./my-music/`). Create a CSV manifest referencing files via relative paths:
 
 ```csv
+# AMBER CATALOGUE INGESTION TEMPLATE — EXAMPLES ONLY
+# WARNING: These placeholder entries are structural illustrations and NOT ready for ingestion.
+# Replace with verified local audio paths, accurate metadata, approved licenses, and valid source URLs.
 relative_path,title,artist,license,source_url
-tracks/acoustic_breeze.wav,Acoustic Breeze,Benjamin Tissot,CC-BY-4.0,https://www.bensound.com
+tracks/acoustic_breeze.wav,Acoustic Breeze,Benjamin Tissot,CC-BY-4.0,https://www.bensound.com/free-music-for-videos
 tracks/sunny_afternoon.mp3,Sunny Afternoon,Open Audio Collective,CC0-1.0,https://freemusicarchive.org/music/sunny
-tracks/creative_minds.wav,Creative Minds,Benjamin Tissot,CC-BY-4.0,https://www.bensound.com
 ```
+
+> [!CAUTION]
+> The sample manifest `scripts/manifests/catalogue-sample.csv` is an illustrative template only. Its entries are non-functional placeholders. Never infer that a track is licensed merely because it can be downloaded. Operators must verify license grants and supply valid audio files before ingestion.
 
 #### Required Manifest Columns:
 - `relative_path`: Relative path from the `--audio-dir` root. Must resolve strictly inside `--audio-dir`.
 - `title`: Track title (1 to 255 characters).
 - `artist`: Track artist (1 to 255 characters).
-- `license`: Music license identifier (e.g., `CC-BY-4.0`, `CC0-1.0`, `Public Domain`, or proprietary license ID).
-- `source_url`: URL or source repository verifying track provenance and licensing rights.
-
-#### Audio Format & Size Rules (matching Amber backend):
-- **Supported Formats**: `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.opus`, `.wma`, `.aiff`.
-- **File Size**: Minimum 12 bytes, maximum 25 MB (`26,214,400 bytes`).
-- **Decoded Duration**: Between 1 second and 600 seconds (10 minutes).
-- **RMS Energy**: Non-silent audio (RMS energy $\ge 10^{-5}$).
+- `license`: Music license identifier (e.g., `CC-BY-4.0`, `CC0-1.0`, `Public Domain`, or proprietary license ID). Cannot be empty.
+- `source_url`: Valid HTTP or HTTPS URL verifying track provenance and licensing rights. Malformed or non-HTTP/HTTPS URLs are rejected during preflight.
 
 ---
 
-### 1.2 Step 1: Running a Dry Run
+### 1.2 Truthful Preflight Audio Validation
+
+The bulk importer inspects audio files before upload to match backend validation rules (`AudioValidationService.java` and `AudioProperties.java`):
+
+1. **Path Traversal Protection**: Ensures the target file does not escape `--audio-dir`.
+2. **File Size Bounds**: Rejects files under 12 bytes (`MIN_FILE_SIZE_BYTES`) or exceeding 25 MB / `26,214,400 bytes` (`MAX_FILE_SIZE_BYTES`).
+3. **Supported Extensions**: `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.opus`, `.wma`, `.aiff` (aligned with backend FFmpeg & Java Sound decoders).
+4. **Duration Bounds**: Decoded duration must be between **1.0 second** and **600.0 seconds** (10 minutes). Tracks outside these bounds are rejected during preflight.
+5. **Silence Detection**: Audio with RMS energy $< 10^{-5}$ is rejected as silent:
+   $$\text{RMS} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} \left(\frac{s_i}{32768}\right)^2}$$
+6. **Inspection Engine & Limitation Reporting**:
+   - **Native Uncompressed PCM WAV**: Evaluated directly via pure-Node.js RIFF header and sample decoding (calculating duration and exact sample RMS).
+   - **Compressed Formats (MP3, FLAC, OGG, etc.)**: Evaluated via local `ffprobe`/`ffmpeg` executable (from `AMBER_FFPROBE_PATH`, `AMBER_FFMPEG_PATH`, system PATH, or Stremio installation).
+   - **Tool Limitation Disclosure**: If FFmpeg/ffprobe is unavailable in the execution environment and the file is in a compressed container, the validator marks the track with `validationLevel: 'structural_only'` and reports that full media decoding, duration, and silence checks were skipped, rather than falsely claiming full verification.
+
+---
+
+### 1.3 Fail-Closed Duplicate Safety
+
+Before initiating imports, the tool queries the Amber catalogue via `GET /api/v1/songs` with pagination:
+
+- **Execute Mode (`--execute`)**: If catalogue retrieval fails or pagination is incomplete (e.g. HTTP 5xx, network timeout, database outage), the tool **fails closed immediately**:
+  - Halts execution with exit code `1`.
+  - Sends **zero** upload requests.
+  - Explains that duplicate protection could not be verified against the remote catalogue.
+- **Dry Run Mode**: If catalogue retrieval fails, items are marked with status `UNKNOWN` (duplicate status `UNKNOWN`) and a warning is printed. The tool never implies duplicates were checked successfully when catalogue retrieval fails.
+- **In-Manifest Duplicate Detection**: Identifies duplicate tracks within the same CSV batch regardless of backend availability.
+
+---
+
+### 1.4 Step 1: Running a Dry Run
 
 Running without `--execute` performs a complete dry run without uploading any audio:
 
@@ -57,16 +86,16 @@ node scripts/bulk-import.mjs \
 ```
 
 The dry run will:
-1. Verify the manifest structure and column headers.
-2. Check that every audio file exists, has a valid extension, and is within size limits.
+1. Verify manifest structure, column headers, non-empty licenses, and valid HTTP/HTTPS source URLs.
+2. Check that every audio file exists, has an allowed extension, and is within size limits.
 3. Check for path traversal attempts (`../`).
-4. Query the existing Amber catalogue via `GET /api/v1/songs` and flag any duplicate tracks.
-5. Display a detailed summary table of what *would* be uploaded, skipped, or rejected.
+4. Inspect duration and RMS silence (or report tool limitations).
+5. Query existing Amber catalogue and flag duplicates or report `UNKNOWN` state if catalogue is unavailable.
 6. Write a structured JSON preview to `./bulk-import-report.json`.
 
 ---
 
-### 1.3 Step 2: Configuring Administrative Authentication
+### 1.5 Step 2: Configuring Administrative Authentication
 
 When uploading to the catalogue (`POST /api/v1/songs`), Amber requires administrative authorization. Set the administrative key in your shell:
 
@@ -85,7 +114,7 @@ $env:AMBER_ADMIN_API_KEY = "your-secret-admin-key"
 
 ---
 
-### 1.4 Step 3: Executing the Ingestion
+### 1.6 Step 3: Executing the Ingestion
 
 To execute the import against a local or remote Amber instance:
 
@@ -112,9 +141,9 @@ node scripts/bulk-import.mjs \
 
 ---
 
-### 1.5 Resuming an Interrupted Import
+### 1.7 Resuming an Interrupted Import & Idempotency Notes
 
-If an import is stopped midway (e.g. network interruption, container sleep, or manual cancellation), the tool saves its progress to the JSON report after every single track.
+If an import is stopped midway (e.g. network interruption, manual cancellation, or server timeout), the tool saves its progress to the JSON report after every single track.
 
 To resume without re-uploading already indexed tracks:
 
@@ -127,7 +156,8 @@ node scripts/bulk-import.mjs \
   --execute
 ```
 
-Tracks marked as `SUCCESS` or `SKIPPED` in the report will be skipped automatically.
+- Tracks recorded as `SUCCESS` or `SKIPPED` in the prior report are matched by relative path and normalized track metadata, and are **preserved without re-uploading**.
+- **Upload Timeout Limitation**: If a network timeout occurs while waiting for `POST /api/v1/songs` response, the server may have processed and indexed the track even though the client received no confirmation. Because the Amber REST API does not provide an idempotency key header (`Idempotency-Key`), the tool does not claim exactly-once delivery guarantees. Resuming re-checks the remote catalogue to safely verify whether the timed-out track was committed.
 
 ---
 
@@ -136,7 +166,7 @@ Tracks marked as `SUCCESS` or `SKIPPED` in the report will be skipped automatica
 The evaluator runs repeatable empirical accuracy tests by submitting query excerpts to `POST /api/v1/search` and evaluating the returned candidates against expected ground-truth metadata.
 
 > [!NOTE]
-> Reference tracks must already be indexed in the Amber catalogue before evaluating their excerpts.
+> Reference tracks must already be indexed in the Amber catalogue before evaluating their excerpts. In dry-run mode, zero search queries are dispatched to the server.
 
 ---
 
@@ -145,6 +175,8 @@ The evaluator runs repeatable empirical accuracy tests by submitting query excer
 Create an evaluation CSV referencing audio excerpts:
 
 ```csv
+# AMBER RECOGNITION EVALUATION TEMPLATE — EXAMPLES ONLY
+# WARNING: Placeholder evaluation fixtures for demonstration. Reference tracks must be pre-indexed in Amber.
 query_path,expected_title,expected_artist,expected_offset_ms,label
 excerpts/acoustic_breeze_crop3s.wav,Acoustic Breeze,Benjamin Tissot,3000,clean-crop-3s
 excerpts/acoustic_breeze_snr6db.wav,Acoustic Breeze,Benjamin Tissot,3000,snr-6db

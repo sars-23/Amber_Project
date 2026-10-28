@@ -15,7 +15,13 @@ export function parseCsv(text, options = {}) {
     throw new TypeError('CSV content must be a string');
   }
 
-  const rows = tokenizeCsv(text);
+  const rawRows = tokenizeCsv(text);
+  if (rawRows.length === 0) {
+    return [];
+  }
+
+  // Filter out full-line comments starting with '#'
+  const rows = rawRows.filter(r => !(r.length > 0 && r[0].trim().startsWith('#')));
   if (rows.length === 0) {
     return [];
   }

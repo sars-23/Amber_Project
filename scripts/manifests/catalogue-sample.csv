@@ -1,3 +1,6 @@
+# AMBER CATALOGUE INGESTION TEMPLATE — EXAMPLES ONLY
+# WARNING: These placeholder entries are structural illustrations and NOT ready for ingestion.
+# Replace with verified local audio paths, accurate metadata, approved licenses, and valid source URLs.
 relative_path,title,artist,license,source_url
 tracks/acoustic_breeze.wav,Acoustic Breeze,Benjamin Tissot,CC-BY-4.0,https://www.bensound.com/free-music-for-videos
 tracks/sunny_afternoon.mp3,Sunny Afternoon,Open Audio Collective,CC0-1.0,https://freemusicarchive.org/music/sunny
