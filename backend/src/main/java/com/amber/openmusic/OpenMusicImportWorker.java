@@ -4,8 +4,11 @@ import com.amber.indexing.SongIndexingService;
 import com.amber.song.Song;
 import com.amber.song.SongRepository;
 import com.amber.song.SongSourceMetadata;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -26,30 +29,88 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 public class OpenMusicImportWorker {
     private static final Logger log = LoggerFactory.getLogger(OpenMusicImportWorker.class);
     private static final long MAX_AUDIO_BYTES = 25L * 1024 * 1024;
     private static final int COPY_BUFFER_BYTES = 8192;
+
     private final OpenMusicImportRepository importRepository;
     private final SongRepository songRepository;
     private final SongIndexingService indexingService;
     private final JamendoClient jamendoClient;
     private final HttpClient downloadClient;
+    private final Duration heartbeatInterval;
+    private final Duration leaseDuration;
+    private final ScheduledExecutorService heartbeatScheduler;
+
+    @Autowired
+    public OpenMusicImportWorker(OpenMusicImportRepository importRepository,
+                                 SongRepository songRepository,
+                                 SongIndexingService indexingService,
+                                 JamendoClient jamendoClient,
+                                 @Value("${amber.open-music.heartbeat-interval-ms:5000}") long heartbeatIntervalMs,
+                                 @Value("${amber.open-music.lease-duration-ms:30000}") long leaseDurationMs) {
+        this(importRepository, songRepository, indexingService, jamendoClient,
+                Duration.ofMillis(heartbeatIntervalMs), Duration.ofMillis(leaseDurationMs),
+                HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(10))
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build());
+    }
 
     public OpenMusicImportWorker(OpenMusicImportRepository importRepository,
                                  SongRepository songRepository,
                                  SongIndexingService indexingService,
                                  JamendoClient jamendoClient) {
+        this(importRepository, songRepository, indexingService, jamendoClient,
+                Duration.ofSeconds(5), Duration.ofSeconds(30));
+    }
+
+    public OpenMusicImportWorker(OpenMusicImportRepository importRepository,
+                                 SongRepository songRepository,
+                                 SongIndexingService indexingService,
+                                 JamendoClient jamendoClient,
+                                 Duration heartbeatInterval,
+                                 Duration leaseDuration) {
+        this(importRepository, songRepository, indexingService, jamendoClient,
+                heartbeatInterval, leaseDuration,
+                HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(10))
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build());
+    }
+
+    public OpenMusicImportWorker(OpenMusicImportRepository importRepository,
+                                 SongRepository songRepository,
+                                 SongIndexingService indexingService,
+                                 JamendoClient jamendoClient,
+                                 Duration heartbeatInterval,
+                                 Duration leaseDuration,
+                                 HttpClient downloadClient) {
         this.importRepository = importRepository;
         this.songRepository = songRepository;
         this.indexingService = indexingService;
         this.jamendoClient = jamendoClient;
-        this.downloadClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
+        this.heartbeatInterval = heartbeatInterval;
+        this.leaseDuration = leaseDuration;
+        this.downloadClient = downloadClient;
+        this.heartbeatScheduler = Executors.newScheduledThreadPool(1, r -> {
+            Thread t = new Thread(r, "open-music-heartbeat");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        heartbeatScheduler.shutdownNow();
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -58,35 +119,74 @@ public class OpenMusicImportWorker {
     }
 
     @Scheduled(fixedDelayString = "${amber.open-music.worker-delay-ms:3000}")
-    public void processOneQueuedTrack() {
-        Optional<QueuedImportItem> claimed = importRepository.claimNextPending();
-        if (claimed.isEmpty()) return;
+    public boolean processOneQueuedTrack() {
+        String workerId = importRepository.getInstanceId();
+        Optional<QueuedImportItem> claimed = importRepository.claimNextPending(workerId, leaseDuration);
+        if (claimed.isEmpty()) return false;
         QueuedImportItem item = claimed.get();
+        processClaimedItem(item, workerId);
+        return true;
+    }
+
+    public void processClaimedItem(QueuedImportItem item, String workerId) {
+        AtomicBoolean ownershipLost = new AtomicBoolean(false);
+        Thread workerThread = Thread.currentThread();
+
+        // Independent heartbeat task that periodically extends the lease in PostgreSQL.
+        // Verifies worker ownership on every renewal tick.
+        ScheduledFuture<?> heartbeatFuture = heartbeatScheduler.scheduleAtFixedRate(() -> {
+            try {
+                boolean renewed = importRepository.renewLease(item.id(), workerId, leaseDuration);
+                if (!renewed) {
+                    log.warn("Worker {} lost lease ownership of item {}", workerId, item.id());
+                    ownershipLost.set(true);
+                    workerThread.interrupt();
+                } else {
+                    log.debug("Worker {} renewed lease for item {}", workerId, item.id());
+                }
+            } catch (Exception ex) {
+                log.warn("Error renewing lease for item {}: {}", item.id(), ex.getMessage());
+            }
+        }, heartbeatInterval.toMillis(), heartbeatInterval.toMillis(), TimeUnit.MILLISECONDS);
+
         boolean interrupted = false;
         try {
-            process(item);
+            process(item, workerId, ownershipLost);
         } catch (Exception ex) {
-            interrupted = ex instanceof InterruptedException;
-            log.warn("Open music import failed for track id {}: {}", item.externalTrackId(), ex.getMessage());
-            importRepository.markItem(item.id(), "FAILED", safeMessage(ex), null, null, null);
+            interrupted = ex instanceof InterruptedException || Thread.interrupted();
+            if (ownershipLost.get()) {
+                log.warn("Worker {} aborted processing track id {} because lease was lost to another worker; " +
+                        "leaving queue state untouched.", workerId, item.externalTrackId());
+            } else {
+                log.warn("Open music import failed for track id {}: {}", item.externalTrackId(), ex.getMessage());
+                importRepository.markItem(item.id(), workerId, "FAILED", safeMessage(ex), null, null, null);
+            }
         } finally {
-            importRepository.refreshJobStatus(item.jobId());
+            heartbeatFuture.cancel(true);
+            if (!ownershipLost.get()) {
+                importRepository.refreshJobStatus(item.jobId());
+            }
             if (interrupted) Thread.currentThread().interrupt();
         }
     }
 
-    private void process(QueuedImportItem item) throws IOException, InterruptedException {
+    private void process(QueuedImportItem item, String workerId, AtomicBoolean ownershipLost) throws IOException, InterruptedException {
+        checkOwnership(ownershipLost);
+
         // 1. Initial check: has this external track already been indexed?
         Optional<Long> existingSource = songRepository.findIdBySource("jamendo", item.externalTrackId());
         if (existingSource.isPresent()) {
-            importRepository.markItem(item.id(), "SKIPPED", "Already indexed from Jamendo.", existingSource.get(), null, null);
+            checkOwnership(ownershipLost);
+            importRepository.markItem(item.id(), workerId, "SKIPPED", "Already indexed from Jamendo.", existingSource.get(), null, null);
             return;
         }
 
         // 2. Fetch fresh metadata and download URL right before downloading (do not rely on stale URLs)
+        checkOwnership(ownershipLost);
         Optional<JamendoTrack> freshTrackOpt = jamendoClient.fetchPermittedTrack(item.externalTrackId());
         if (freshTrackOpt.isEmpty()) {
-            importRepository.markItem(item.id(), "FAILED",
+            checkOwnership(ownershipLost);
+            importRepository.markItem(item.id(), workerId, "FAILED",
                     "Track is no longer downloadable or eligible under Amber's supported license policy.",
                     null, null, null);
             return;
@@ -97,41 +197,50 @@ public class OpenMusicImportWorker {
         String downloadedSha256 = null;
         long downloadedBytes = 0L;
         try {
-            // 3. Download audio from fresh URL with strict host validation and 25 MB stream limit
-            downloadedBytes = downloadToFile(freshTrack.downloadUrl(), temporaryAudio);
+            // 3. Download audio from fresh URL with strict host validation, 25 MB stream limit, and live ownership checks
+            downloadedBytes = downloadToFile(freshTrack.downloadUrl(), temporaryAudio, ownershipLost);
+            checkOwnership(ownershipLost);
+
             if (downloadedBytes < 12) {
                 throw new IOException("Downloaded file is too small to be valid audio.");
             }
             downloadedSha256 = sha256(temporaryAudio);
+            checkOwnership(ownershipLost);
 
             // 4. Duplicate content hash check
             Optional<Long> existingContent = songRepository.findIdByContentSha256(downloadedSha256);
             if (existingContent.isPresent()) {
-                importRepository.markItem(item.id(), "SKIPPED", "Identical audio content is already indexed.",
+                checkOwnership(ownershipLost);
+                importRepository.markItem(item.id(), workerId, "SKIPPED", "Identical audio content is already indexed.",
                         existingContent.get(), downloadedBytes, downloadedSha256);
                 return;
             }
 
             // 5. Transactional indexing with existing SongIndexingService
+            checkOwnership(ownershipLost);
             byte[] audioBytes = Files.readAllBytes(temporaryAudio);
             SongSourceMetadata provenance = new SongSourceMetadata("jamendo", freshTrack.id(),
                     freshTrack.sourceUrl(), freshTrack.licenseUrl(), freshTrack.attributionText(), downloadedSha256);
             Song indexed = indexingService.indexSongFromSource(freshTrack.title(), freshTrack.artist(), audioBytes,
                     safeFilename(freshTrack.id()), provenance);
 
-            importRepository.markItem(item.id(), "IMPORTED", null, indexed.id(), downloadedBytes, downloadedSha256);
+            checkOwnership(ownershipLost);
+            importRepository.markItem(item.id(), workerId, "IMPORTED", null, indexed.id(), downloadedBytes, downloadedSha256);
         } catch (RuntimeException ex) {
+            if (ownershipLost.get()) {
+                throw new InterruptedException("Worker lost ownership during processing.");
+            }
             // A concurrent worker may have indexed this same source or content after our first check.
             Optional<Long> concurrentSource = songRepository.findIdBySource("jamendo", item.externalTrackId());
             if (concurrentSource.isPresent()) {
-                importRepository.markItem(item.id(), "SKIPPED", "This Jamendo track was indexed by another import job.",
+                importRepository.markItem(item.id(), workerId, "SKIPPED", "This Jamendo track was indexed by another import job.",
                         concurrentSource.get(), downloadedBytes > 0 ? downloadedBytes : null, downloadedSha256);
                 return;
             }
             if (downloadedSha256 != null) {
                 Optional<Long> concurrentContent = songRepository.findIdByContentSha256(downloadedSha256);
                 if (concurrentContent.isPresent()) {
-                    importRepository.markItem(item.id(), "SKIPPED", "Identical audio content was indexed by another job.",
+                    importRepository.markItem(item.id(), workerId, "SKIPPED", "Identical audio content was indexed by another job.",
                             concurrentContent.get(), downloadedBytes > 0 ? downloadedBytes : null, downloadedSha256);
                     return;
                 }
@@ -142,7 +251,13 @@ public class OpenMusicImportWorker {
         }
     }
 
-    private long downloadToFile(String firstUrl, Path destination) throws IOException, InterruptedException {
+    private static void checkOwnership(AtomicBoolean ownershipLost) throws InterruptedException {
+        if (ownershipLost.get() || Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("Processing aborted: worker lost lease ownership or was interrupted.");
+        }
+    }
+
+    private long downloadToFile(String firstUrl, Path destination, AtomicBoolean ownershipLost) throws IOException, InterruptedException {
         URI uri;
         try {
             uri = URI.create(firstUrl);
@@ -150,6 +265,7 @@ public class OpenMusicImportWorker {
             throw new IOException("Jamendo returned an invalid download URL.");
         }
         for (int redirectCount = 0; redirectCount <= 4; redirectCount++) {
+            checkOwnership(ownershipLost);
             validateDownloadUri(uri);
             HttpRequest request = HttpRequest.newBuilder(uri)
                     .timeout(Duration.ofSeconds(90))
@@ -190,6 +306,9 @@ public class OpenMusicImportWorker {
                 byte[] buffer = new byte[COPY_BUFFER_BYTES];
                 int read;
                 while ((read = input.read(buffer)) != -1) {
+                    if (ownershipLost.get() || Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException("Download cancelled: worker lost lease ownership or was interrupted.");
+                    }
                     total += read;
                     if (total > MAX_AUDIO_BYTES) throw new IOException("Track exceeds the 25 MB per-file import limit.");
                     output.write(buffer, 0, read);

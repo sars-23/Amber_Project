@@ -106,6 +106,23 @@ public class OpenMusicImportRepository {
     }
 
     @Transactional
+    public boolean markItem(UUID itemId, String workerId, String status, String error, Long songId, Long downloadedBytes, String sha256) {
+        String safeError = error;
+        if (safeError != null && safeError.length() > 590) safeError = safeError.substring(0, 590);
+        int updated = jdbc.update("""
+                UPDATE open_music_import_items
+                SET status = ?, error_message = ?, song_id = COALESCE(?, song_id),
+                    downloaded_bytes = COALESCE(?, downloaded_bytes),
+                    content_sha256 = COALESCE(?, content_sha256),
+                    lease_until = NULL,
+                    locked_by = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND locked_by = ?
+                """, status, safeError, songId, downloadedBytes, sha256, itemId, workerId);
+        return updated > 0;
+    }
+
+    @Transactional
     public void markItem(UUID itemId, String status, String error, Long songId, Long downloadedBytes, String sha256) {
         String safeError = error;
         if (safeError != null && safeError.length() > 590) safeError = safeError.substring(0, 590);
@@ -119,6 +136,19 @@ public class OpenMusicImportRepository {
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """, status, safeError, songId, downloadedBytes, sha256, itemId);
+    }
+
+    public record ItemLeaseInfo(String status, String lockedBy, Instant leaseUntil) {}
+
+    public Optional<ItemLeaseInfo> getItemLeaseInfo(UUID itemId) {
+        List<ItemLeaseInfo> list = jdbc.query("""
+                SELECT status, locked_by, lease_until FROM open_music_import_items WHERE id = ?
+                """, (rs, rowNum) -> new ItemLeaseInfo(
+                rs.getString("status"),
+                rs.getString("locked_by"),
+                instant(rs.getTimestamp("lease_until"))
+        ), itemId);
+        return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
     }
 
     public void refreshJobStatus(UUID jobId) {
