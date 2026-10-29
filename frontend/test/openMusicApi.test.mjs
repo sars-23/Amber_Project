@@ -148,4 +148,31 @@ describe('Open Music API Service', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('translates HTTP 422 into OpenMusicError with trackId and reasonCode', async () => {
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        message: 'Track 121711 cannot be downloaded because the artist has disabled downloads on Jamendo.',
+        trackId: '121711',
+        reasonCode: 'DOWNLOAD_NOT_ALLOWED',
+      }),
+    });
+
+    try {
+      await assert.rejects(
+        async () => startOpenMusicImport(['121711'], 'my-admin-key'),
+        (err) => {
+          assert.equal(err.name, 'OpenMusicError');
+          assert.equal(err.trackId, '121711');
+          assert.equal(err.reasonCode, 'DOWNLOAD_NOT_ALLOWED');
+          assert.match(err.message, /disabled downloads/);
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

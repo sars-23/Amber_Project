@@ -95,6 +95,19 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    @ExceptionHandler(com.amber.openmusic.TrackEligibilityException.class)
+    public ResponseEntity<Map<String, Object>> handleTrackEligibility(com.amber.openmusic.TrackEligibilityException ex) {
+        log.warn("Track eligibility rejected for track {}: [{}] {}", ex.getTrackId(), ex.getRejectionReason(), ex.getReason());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("status", HttpStatus.UNPROCESSABLE_ENTITY.value());
+        body.put("error", "Unprocessable Entity");
+        body.put("message", ex.getReason() != null ? ex.getReason() : ex.getMessage());
+        body.put("trackId", ex.getTrackId());
+        body.put("reasonCode", ex.getRejectionReason().name());
+        body.put("timestamp", Instant.now().toString());
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(body);
+    }
+
     @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
     public ResponseEntity<Map<String, Object>> handleResponseStatus(org.springframework.web.server.ResponseStatusException ex) {
         log.warn("Response status exception: {} - {}", ex.getStatusCode(), ex.getReason());

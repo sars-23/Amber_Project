@@ -9,12 +9,32 @@ function adminHeaders(adminKey: string): Record<string, string> {
   return { 'X-Amber-Admin-Key': key };
 }
 
+export interface ApiErrorResponse {
+  message?: string;
+  error?: string;
+  trackId?: string;
+  reasonCode?: string;
+}
+
+export class OpenMusicError extends Error {
+  trackId?: string;
+  reasonCode?: string;
+
+  constructor(message: string, trackId?: string, reasonCode?: string) {
+    super(message);
+    this.name = 'OpenMusicError';
+    this.trackId = trackId;
+    this.reasonCode = reasonCode;
+  }
+}
+
 async function responseError(response: Response, fallback: string): Promise<Error> {
-  const data = await response.json().catch(() => ({})) as { message?: string; error?: string };
-  if (response.status === 401) return new Error('Amber admin authorization is required.');
-  if (response.status === 403) return new Error(data.message || 'The Amber Admin API Key was rejected.');
-  if (response.status === 429) return new Error('Search rate limit reached. Please wait a moment before searching again.');
-  return new Error(data.message || data.error || `${fallback} (HTTP ${response.status})`);
+  const data = await response.json().catch(() => ({})) as ApiErrorResponse;
+  const message = data.message || data.error || `${fallback} (HTTP ${response.status})`;
+  if (response.status === 401) return new OpenMusicError('Amber admin authorization is required.');
+  if (response.status === 403) return new OpenMusicError(data.message || 'The Amber Admin API Key was rejected.');
+  if (response.status === 429) return new OpenMusicError('Search rate limit reached. Please wait a moment before searching again.');
+  return new OpenMusicError(message, data.trackId, data.reasonCode);
 }
 
 export async function searchOpenMusicTracks(query: string, limit = 20): Promise<JamendoTrack[]> {

@@ -7,6 +7,7 @@ import {
   cancelOpenMusicImport,
   fetchActiveOpenMusicJobs,
   fetchOpenMusicImportJob,
+  OpenMusicError,
   retryFailedOpenMusicImport,
   searchOpenMusicTracks,
   startOpenMusicImport,
@@ -51,6 +52,7 @@ export const OpenMusicImporter: React.FC<OpenMusicImporterProps> = ({
   const [starting, setStarting] = useState(false);
   const [jobActionBusy, setJobActionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failingTrackId, setFailingTrackId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const lastJobStateRef = useRef<string>('');
 
@@ -62,6 +64,7 @@ export const OpenMusicImporter: React.FC<OpenMusicImporterProps> = ({
     }
     setSearching(true);
     setError(null);
+    setFailingTrackId(null);
     setNotice(null);
     try {
       const results = await searchOpenMusicTracks(query.trim(), 20);
@@ -160,6 +163,16 @@ export const OpenMusicImporter: React.FC<OpenMusicImporterProps> = ({
     });
   };
 
+  const handleDeselectFailing = (id: string) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
+    setFailingTrackId(null);
+    setError(null);
+  };
+
   const handleStartImport = async () => {
     if (!adminKey.trim()) {
       setError('Enter the Amber Admin API Key before starting an import.');
@@ -171,6 +184,7 @@ export const OpenMusicImporter: React.FC<OpenMusicImporterProps> = ({
     }
     setStarting(true);
     setError(null);
+    setFailingTrackId(null);
     setNotice(null);
     try {
       const newJob = await startOpenMusicImport(Array.from(selectedIds), adminKey);
@@ -178,7 +192,17 @@ export const OpenMusicImporter: React.FC<OpenMusicImporterProps> = ({
       setSelectedIds(new Set());
       setNotice('Import queued. Amber downloads one track at a time and indexes it through the existing fingerprinting pipeline.');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not start import.');
+      if (err instanceof OpenMusicError) {
+        setError(err.message);
+        setFailingTrackId(err.trackId ?? null);
+      } else if (err instanceof Error) {
+        setError(err.message);
+        const match = err.message.match(/Track\s+([0-9]{1,20})/);
+        setFailingTrackId(match ? match[1] : null);
+      } else {
+        setError('Could not start import.');
+        setFailingTrackId(null);
+      }
     } finally {
       setStarting(false);
     }
@@ -266,13 +290,19 @@ export const OpenMusicImporter: React.FC<OpenMusicImporterProps> = ({
               </div>
             ) : tracks.map((track) => {
               const selected = selectedIds.has(track.id);
+              const isFailing = failingTrackId === track.id;
               return (
-                <label key={track.id} className={`flex items-start gap-3 p-4 cursor-pointer transition-colors ${selected ? 'bg-amber-50/60' : 'hover:bg-gray-50'}`}>
-                  <input type="checkbox" checked={selected} disabled={!selected && selectedCount >= 25} onChange={() => toggleTrack(track.id)} className="mt-1 h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+                <label key={track.id} className={`flex items-start gap-3 p-4 cursor-pointer transition-colors ${isFailing ? 'bg-red-50/70 border-l-4 border-red-500' : selected ? 'bg-amber-50/60' : 'hover:bg-gray-50'}`}>
+                  <input type="checkbox" checked={selected} disabled={!selected && selectedCount >= 25} onChange={() => { toggleTrack(track.id); if (isFailing) setFailingTrackId(null); }} className="mt-1 h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="text-sm font-semibold text-gray-900">{track.title}</span>
                       <span className="text-xs text-gray-400">{formatDuration(track.durationSeconds)}</span>
+                      {isFailing && (
+                        <span className="inline-flex items-center rounded border border-red-300 bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-800">
+                          Ineligible track
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5 text-xs text-gray-600">{track.artist}{track.album ? ` · ${track.album}` : ''}</div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -358,8 +388,19 @@ export const OpenMusicImporter: React.FC<OpenMusicImporterProps> = ({
 
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${error ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
         {error ? <XCircle className="w-4 h-4 shrink-0 mt-0.5" /> : <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />}
-        <span className="flex-1">{error || notice}</span>
-        <button onClick={() => { setError(null); setNotice(null); }} className="text-current opacity-70 hover:opacity-100" aria-label="Dismiss message">×</button>
+        <div className="flex-1 flex flex-wrap items-center justify-between gap-2">
+          <span>{error || notice}</span>
+          {failingTrackId && selectedIds.has(failingTrackId) && (
+            <button
+              type="button"
+              onClick={() => handleDeselectFailing(failingTrackId)}
+              className="inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded bg-red-100 text-red-800 hover:bg-red-200 border border-red-300 transition-colors"
+            >
+              Deselect track {failingTrackId}
+            </button>
+          )}
+        </div>
+        <button onClick={() => { setError(null); setNotice(null); setFailingTrackId(null); }} className="text-current opacity-70 hover:opacity-100" aria-label="Dismiss message">×</button>
       </div>}
     </div>
   );
