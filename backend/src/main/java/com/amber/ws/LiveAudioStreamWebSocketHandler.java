@@ -89,6 +89,7 @@ public class LiveAudioStreamWebSocketHandler extends AbstractWebSocketHandler {
             response.put("totalQueryFingerprints", matchResult.totalQueryFingerprints());
             response.put("processingTimeMs", matchResult.searchDurationMs());
             response.put("searchDurationMs", matchResult.searchDurationMs());
+            response.put("message", matchResult.message());
 
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
         }

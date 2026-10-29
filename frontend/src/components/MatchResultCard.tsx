@@ -70,7 +70,7 @@ export const MatchResultCard: React.FC<MatchResultCardProps> = ({ result }) => {
                 No Confident Match Found
               </h3>
               <span className="text-xs font-mono font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
-                {confidencePercent} confidence
+                {safeConfidence > 0 ? `Below threshold (${confidencePercent})` : 'No match'}
               </span>
             </div>
             <p className="text-sm text-gray-600 mt-1">

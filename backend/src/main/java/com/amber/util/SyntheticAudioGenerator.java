@@ -114,4 +114,47 @@ public final class SyntheticAudioGenerator {
         dos.flush();
         return baos.toByteArray();
     }
+
+    /**
+     * Generates a realistic singing voice simulation containing fundamental pitch glides,
+     * natural vocal vibrato (5.5 Hz), and human formant harmonic resonances.
+     */
+    public static short[] generateVocalSimulation(double[] basePitchesHz, double noteDurationSeconds, int sampleRate) {
+        int samplesPerNote = (int) Math.round(noteDurationSeconds * sampleRate);
+        int totalSamples = samplesPerNote * basePitchesHz.length;
+        short[] samples = new short[totalSamples];
+
+        for (int noteIdx = 0; noteIdx < basePitchesHz.length; noteIdx++) {
+            double f0 = basePitchesHz[noteIdx];
+            int noteStart = noteIdx * samplesPerNote;
+
+            // Formant resonances for open vocal vowel (/a/): F1 ~ 730Hz, F2 ~ 1100Hz, F3 ~ 2450Hz
+            double f1 = 730.0;
+            double f2 = 1100.0;
+            double f3 = 2450.0;
+
+            for (int i = 0; i < samplesPerNote; i++) {
+                double time = (double) i / sampleRate;
+                // Vocal vibrato: 5.5 Hz modulation with 2% pitch depth
+                double vibrato = 1.0 + 0.02 * Math.sin(2.0 * Math.PI * 5.5 * time);
+                double currentF0 = f0 * vibrato;
+
+                // Harmonics weighted by formant proximity
+                double harmonic1 = Math.sin(2.0 * Math.PI * currentF0 * time);
+                double harmonic2 = 0.7 * Math.sin(2.0 * Math.PI * (currentF0 * 2.0) * time);
+                double harmonic3 = 0.5 * Math.sin(2.0 * Math.PI * (currentF0 * 3.0) * time);
+                double formant1 = 0.6 * Math.sin(2.0 * Math.PI * f1 * time);
+                double formant2 = 0.4 * Math.sin(2.0 * Math.PI * f2 * time);
+                double formant3 = 0.2 * Math.sin(2.0 * Math.PI * f3 * time);
+
+                // Vocal envelope: gentle attack, sustained body, decay
+                double notePhase = (double) i / samplesPerNote;
+                double env = Math.min(1.0, notePhase * 10.0) * (1.0 - 0.2 * notePhase);
+
+                double combined = (harmonic1 + harmonic2 + harmonic3 + formant1 + formant2 + formant3) / 3.4 * env;
+                samples[noteStart + i] = (short) Math.round(Math.max(-1.0, Math.min(1.0, combined)) * 32767.0 * 0.85);
+            }
+        }
+        return samples;
+    }
 }

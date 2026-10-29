@@ -124,6 +124,11 @@ describe('Evaluation Metrics Calculator', () => {
     assert.equal(metrics.summary.falsePositiveRatePercent, 50.0); // 1/2 = 50%
     assert.equal(metrics.summary.trueNegativeRatePercent, 50.0); // 1/2 = 50%
 
+    // Precision, Recall, and False Negative Rate
+    assert.equal(metrics.summary.precisionPercent, 50.0); // 2 / (2 + 1 + 1) = 50%
+    assert.equal(metrics.summary.recallPercent, 50.0); // 2 / 4 = 50%
+    assert.equal(metrics.summary.falseNegativeRatePercent, 25.0); // 1 / 4 = 25%
+
     // Offset MAE: only evaluated for correct matches with valid numbers: (100 + 0) / 2 = 50ms
     assert.equal(metrics.offsetAccuracy.evaluatedCount, 2);
     assert.equal(metrics.offsetAccuracy.meanAbsoluteErrorMs, 50.0);
