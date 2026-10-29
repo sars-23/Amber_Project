@@ -1,7 +1,7 @@
 import type { Song, MatchResponse, StatsResponse, HealthResponse } from '../types/api';
 
 export function getApiBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
   if (envUrl) {
     const clean = envUrl.replace(/\/+$/, '');
     return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
@@ -14,8 +14,8 @@ export function getApiBaseUrl(): string {
 }
 
 export function getWebSocketUrl(): string {
-  if (import.meta.env.VITE_WS_URL) {
-    return import.meta.env.VITE_WS_URL;
+  if ((import.meta as any).env?.VITE_WS_URL) {
+    return (import.meta as any).env.VITE_WS_URL;
   }
   const apiBase = getApiBaseUrl();
   if (apiBase && (apiBase.startsWith('http://') || apiBase.startsWith('https://'))) {

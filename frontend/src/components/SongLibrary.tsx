@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Music, Trash2, Plus, Clock, Database, Loader2, AlertCircle, Search, FolderUp, X, ShieldCheck } from 'lucide-react';
+import { Music, Trash2, Plus, Clock, Database, Loader2, AlertCircle, Search, FolderUp, X, ShieldCheck, Globe } from 'lucide-react';
 import { indexSong, deleteSong } from '../services/apiClient';
 import type { Song } from '../types/api';
 
@@ -8,6 +8,7 @@ interface SongLibraryProps {
   loading: boolean;
   onRefresh: () => void;
   onOpenBulkImport?: () => void;
+  onOpenOpenMusic?: () => void;
 }
 
 export const SongLibrary: React.FC<SongLibraryProps> = ({
@@ -15,6 +16,7 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({
   loading,
   onRefresh,
   onOpenBulkImport,
+  onOpenOpenMusic,
 }) => {
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -118,6 +120,17 @@ export const SongLibrary: React.FC<SongLibraryProps> = ({
             >
               <FolderUp className="w-4 h-4 text-amber-600" />
               <span>Bulk Import</span>
+            </button>
+          )}
+
+          {onOpenOpenMusic && (
+            <button
+              onClick={onOpenOpenMusic}
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors shadow-sm"
+              title="Search and import openly licensed music from Jamendo"
+            >
+              <Globe className="w-4 h-4 text-emerald-600" />
+              <span>Open Music</span>
             </button>
           )}
 

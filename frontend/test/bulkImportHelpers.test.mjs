@@ -8,8 +8,6 @@ import {
   checkDuplicates,
   formatFileSize,
   MAX_FILE_SIZE_BYTES,
-  MIN_FILE_SIZE_BYTES,
-  MAX_METADATA_LENGTH,
 } from '../src/utils/bulkImportHelpers.ts';
 
 describe('Bulk Music Importer - Metadata Parsing', () => {
