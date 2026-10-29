@@ -153,6 +153,21 @@ export function calculateEvaluationMetrics(queryResults, options = {}) {
     ? Number(((negativeControlTrueNegatives / negativeControls) * 100).toFixed(2))
     : null;
 
+  // Precision: fraction of positive predictions that were correct identifications
+  const totalPositivePredictions = correctMatches + wrongSongIdentifications + negativeControlFalsePositives;
+  const precisionPercent = totalPositivePredictions > 0
+    ? Number(((correctMatches / totalPositivePredictions) * 100).toFixed(2))
+    : null;
+
+  // Recall: fraction of expected target matches correctly identified
+  const recallPercent = expectedMatches > 0
+    ? identificationRate
+    : null;
+
+  const falseNegativeRatePercent = expectedMatches > 0
+    ? missedRate
+    : null;
+
   // Offset statistics
   const offsetMae = offsetErrors.length > 0
     ? Number((offsetErrors.reduce((acc, v) => acc + v, 0) / offsetErrors.length).toFixed(2))
@@ -230,7 +245,10 @@ export function calculateEvaluationMetrics(queryResults, options = {}) {
       negativeControlTrueNegatives,
       negativeControlFalsePositives,
       falsePositiveRatePercent: falsePositiveRate,
-      trueNegativeRatePercent: trueNegativeRate
+      trueNegativeRatePercent: trueNegativeRate,
+      precisionPercent,
+      recallPercent,
+      falseNegativeRatePercent
     },
     offsetAccuracy: {
       evaluatedCount: offsetErrors.length,

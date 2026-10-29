@@ -282,6 +282,13 @@ export async function runEvaluation(cliArgs = process.argv.slice(2)) {
     console.log(` Negative Control FPR      : N/A (No negative controls in dataset)`);
     console.log('-'.repeat(78));
   }
+  const precStr = metrics.summary.precisionPercent !== null ? `${metrics.summary.precisionPercent}%` : 'N/A';
+  const recStr = metrics.summary.recallPercent !== null ? `${metrics.summary.recallPercent}%` : 'N/A';
+  const fnrStr = metrics.summary.falseNegativeRatePercent !== null ? `${metrics.summary.falseNegativeRatePercent}%` : 'N/A';
+  console.log(` Precision                 : ${precStr}`);
+  console.log(` Recall                    : ${recStr}`);
+  console.log(` False Negative Rate (FNR) : ${fnrStr}`);
+  console.log('-'.repeat(78));
   if (metrics.offsetAccuracy.evaluatedCount > 0) {
     console.log(` Evaluated Offsets         : ${metrics.offsetAccuracy.evaluatedCount} (Unavailable: ${metrics.offsetAccuracy.unavailableCount})`);
     console.log(` Within Tolerance (±${metrics.offsetAccuracy.toleranceMs}ms) : ${metrics.offsetAccuracy.withinToleranceCount} (${metrics.offsetAccuracy.withinToleranceRatePercent}%)`);

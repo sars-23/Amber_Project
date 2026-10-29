@@ -21,10 +21,19 @@ public class AudioMatchingService {
 
     private static final Logger log = LoggerFactory.getLogger(AudioMatchingService.class);
 
+    // Multi-factor recognition thresholds
     // Minimum votes in the dominant offset bucket required to claim a genuine match
-    public static final int MIN_PEAK_VOTES_THRESHOLD = 2;
-    // Minimum coherence score required
-    public static final double MIN_SCORE_THRESHOLD = 2.0;
+    public static final int MIN_PEAK_VOTES_THRESHOLD = 4;
+    // Minimum time-coherent score required
+    public static final double MIN_SCORE_THRESHOLD = 3.0;
+    // Minimum fraction of candidate's total hash hits concentrated in the dominant peak bucket
+    public static final double MIN_COHERENCE_RATIO_THRESHOLD = 0.05;
+    // Minimum composite confidence required to identify a song
+    public static final double MIN_CONFIDENCE_THRESHOLD = 0.35;
+    // Minimum relative separation margin required between winner and non-trivial runner-up
+    public static final double MIN_AMBIGUITY_MARGIN_THRESHOLD = 0.15;
+    // Minimum query fingerprints required to perform recognition
+    public static final int MIN_QUERY_FINGERPRINTS = 10;
 
     private final FingerprintRepository fingerprintRepository;
     private final SongRepository songRepository;
@@ -67,10 +76,11 @@ public class AudioMatchingService {
     public MatchResult matchFingerprints(List<Fingerprint> queryFingerprints) {
         long startTime = System.nanoTime();
 
-        if (queryFingerprints == null || queryFingerprints.isEmpty()) {
+        if (queryFingerprints == null || queryFingerprints.size() < MIN_QUERY_FINGERPRINTS) {
             double duration = (System.nanoTime() - startTime) / 1_000_000.0;
             recordSearchMetrics(duration);
-            return MatchResult.noMatch(0, duration);
+            int count = queryFingerprints == null ? 0 : queryFingerprints.size();
+            return MatchResult.noMatch(count, duration, "Insufficient audio features detected in query excerpt.");
         }
 
         // 1. Group query anchor timestamps by hash
@@ -85,7 +95,7 @@ public class AudioMatchingService {
         if (candidates.isEmpty()) {
             double duration = (System.nanoTime() - startTime) / 1_000_000.0;
             recordSearchMetrics(duration);
-            return MatchResult.noMatch(queryFingerprints.size(), duration);
+            return MatchResult.noMatch(queryFingerprints.size(), duration, "No matching audio fingerprints found in the catalogue.");
         }
 
         // 3. Accumulate offset histogram votes per candidate song
@@ -112,58 +122,120 @@ public class AudioMatchingService {
         recordSearchMetrics(durationMs);
 
         if (ranked.isEmpty()) {
-            return MatchResult.noMatch(queryFingerprints.size(), durationMs);
+            return MatchResult.noMatch(queryFingerprints.size(), durationMs, "No candidate songs matched the query audio.");
         }
 
         OffsetHistogram winner = ranked.get(0);
         double winnerScore = winner.calculateScore();
         int winnerPeakVotes = winner.getPeakVotes();
+        int totalWinnerVotes = winner.getTotalMatches();
+        double coherenceRatio = totalWinnerVotes > 0 ? (double) winnerPeakVotes / totalWinnerVotes : 0.0;
 
-        log.info("Match evaluation: queryFPs={}, candidates={}, histograms={}, winnerSongId={}, peakVotes={}, score={}",
-                queryFingerprints.size(), candidates.size(), histograms.size(),
-                winner != null ? winner.getSongId() : "none",
-                winner != null ? winner.getPeakVotes() : 0,
-                winner != null ? winner.calculateScore() : 0.0);
-
-        // Check if winning candidate meets minimum confidence criteria
-        if (winnerPeakVotes < MIN_PEAK_VOTES_THRESHOLD || winnerScore < MIN_SCORE_THRESHOLD) {
-            log.warn("No match: candidate songId={} peakVotes={} score={:.2f} below threshold (minVotes={}, minScore={})",
-                    winner.getSongId(), winnerPeakVotes, winnerScore, MIN_PEAK_VOTES_THRESHOLD, MIN_SCORE_THRESHOLD);
-            return MatchResult.noMatch(queryFingerprints.size(), durationMs);
-        }
-
-        // Calculate separation margin over runner-up (if any)
-        double margin = 1.0;
+        // Calculate runner-up comparison and separation margin
+        double secondScore = 0.0;
+        double margin;
         if (ranked.size() > 1) {
-            double secondScore = ranked.get(1).calculateScore();
-            margin = (winnerScore - secondScore) / (winnerScore + 1.0);
+            secondScore = ranked.get(1).calculateScore();
+            // Relative separation between 1st and 2nd candidate
+            margin = (winnerScore - secondScore) / Math.max(winnerScore, 1.0);
+        } else {
+            // Single candidate: conservative margin based on signal prominence, never 1.0
+            double internalScoreRatio = Math.min(1.0, winnerScore / 10.0);
+            margin = Math.min(0.88, 0.50 + 0.38 * internalScoreRatio);
+        }
+        margin = Math.max(0.0, margin);
+
+        // Calculate candidate confidence BEFORE acceptance decision
+        double peakRatio = Math.min(1.0, (double) winnerPeakVotes / 30.0);
+        double marginWeight = Math.min(1.0, margin);
+        double rawConfidence = 0.50 * peakRatio + 0.50 * marginWeight;
+        double confidence = Math.min(1.0, Math.max(0.0, rawConfidence));
+        double roundedConfidence = Math.round(confidence * 100.0) / 100.0;
+        double roundedScore = Math.round(winnerScore * 10.0) / 10.0;
+
+        log.info("Match evaluation: queryFPs={}, candidates={}, histograms={}, winnerSongId={}, peakVotes={}, score={:.2f}, coherence={:.3f}, margin={:.3f}, conf={:.2f}",
+                queryFingerprints.size(), candidates.size(), histograms.size(),
+                winner.getSongId(), winnerPeakVotes, winnerScore, coherenceRatio, margin, confidence);
+
+        // Gate 1: Check minimum peak votes
+        if (winnerPeakVotes < MIN_PEAK_VOTES_THRESHOLD) {
+            log.warn("Match rejected: candidate songId={} peakVotes={} below threshold {}",
+                    winner.getSongId(), winnerPeakVotes, MIN_PEAK_VOTES_THRESHOLD);
+            return MatchResult.noMatchWithDiagnostics(
+                    queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
+                    totalWinnerVotes, winner.getTopBuckets(15),
+                    "Insufficient time-coherent votes in peak offset bucket."
+            );
         }
 
-        double confidence = Math.min(1.0, Math.max(0.0,
-                0.5 * ((double) winnerPeakVotes / Math.max(winnerPeakVotes, 30)) +
-                0.5 * Math.max(0.0, margin)));
+        // Gate 2: Check coherence score
+        if (winnerScore < MIN_SCORE_THRESHOLD) {
+            log.warn("Match rejected: candidate songId={} score={:.2f} below threshold {:.2f}",
+                    winner.getSongId(), winnerScore, MIN_SCORE_THRESHOLD);
+            return MatchResult.noMatchWithDiagnostics(
+                    queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
+                    totalWinnerVotes, winner.getTopBuckets(15),
+                    "Offset-histogram coherence score below recognition threshold."
+            );
+        }
 
+        // Gate 3: Check coherence ratio (reject random background hash collisions)
+        if (coherenceRatio < MIN_COHERENCE_RATIO_THRESHOLD) {
+            log.warn("Match rejected: candidate songId={} coherenceRatio={:.4f} below threshold {:.2f} (scattered noise)",
+                    winner.getSongId(), coherenceRatio, MIN_COHERENCE_RATIO_THRESHOLD);
+            return MatchResult.noMatchWithDiagnostics(
+                    queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
+                    totalWinnerVotes, winner.getTopBuckets(15),
+                    "Offset histogram scatter indicates random background hash collisions."
+            );
+        }
+
+        // Gate 4: Candidate ambiguity check (winner barely beats runner-up)
+        if (ranked.size() > 1 && secondScore >= 2.0 && margin < MIN_AMBIGUITY_MARGIN_THRESHOLD) {
+            log.warn("Match rejected: ambiguous candidates song1={} (score={:.2f}) vs song2={} (score={:.2f}), margin={:.3f}",
+                    winner.getSongId(), winnerScore, ranked.get(1).getSongId(), secondScore, margin);
+            return MatchResult.noMatchWithDiagnostics(
+                    queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
+                    totalWinnerVotes, winner.getTopBuckets(15),
+                    "Ambiguous match: Multiple candidate songs exhibited comparable acoustic correlation."
+            );
+        }
+
+        // Gate 5: Candidate confidence check
+        if (confidence < MIN_CONFIDENCE_THRESHOLD) {
+            log.warn("Match rejected: candidate songId={} confidence={:.2f} below threshold {:.2f}",
+                    winner.getSongId(), confidence, MIN_CONFIDENCE_THRESHOLD);
+            return MatchResult.noMatchWithDiagnostics(
+                    queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
+                    totalWinnerVotes, winner.getTopBuckets(15),
+                    String.format("Candidate acoustic confidence (%.1f%%) is below acceptance threshold.", roundedConfidence * 100.0)
+            );
+        }
+
+        // Gate 6: Verify song exists in catalogue
         Optional<Song> songOpt = songRepository.findById(winner.getSongId());
         if (songOpt.isEmpty()) {
-            return MatchResult.noMatch(queryFingerprints.size(), durationMs);
+            log.warn("Match rejected: candidate songId={} not found in database", winner.getSongId());
+            return MatchResult.noMatch(queryFingerprints.size(), durationMs, "Winning candidate metadata was not found in the catalogue.");
         }
 
         Song song = songOpt.get();
         int estimatedOffsetMs = Math.max(0, winner.getPeakOffsetMs());
 
-        log.info("MATCH FOUND: '{}' by '{}' at offset {}ms (votes={}, score={:.2f}, conf={:.2f}) in {:.2f}ms",
-                song.title(), song.artist(), estimatedOffsetMs, winnerPeakVotes, winnerScore, confidence, durationMs);
+        log.info("MATCH IDENTIFIED: '{}' by '{}' at offset {}ms (votes={}, score={:.2f}, conf={:.2f}, margin={:.2f}) in {:.2f}ms",
+                song.title(), song.artist(), estimatedOffsetMs, winnerPeakVotes, winnerScore, roundedConfidence, margin, durationMs);
 
         return new MatchResult(
                 true,
                 song,
                 estimatedOffsetMs,
-                Math.round(winnerScore * 10.0) / 10.0,
-                Math.round(confidence * 100.0) / 100.0,
-                winner.getTotalMatches(),
+                roundedScore,
+                roundedConfidence,
+                totalWinnerVotes,
                 queryFingerprints.size(),
                 Math.round(durationMs * 10.0) / 10.0,
-                winner.getTopBuckets(15)
+                winner.getTopBuckets(15),
+                "Acoustic match confirmed with high confidence."
         );
     }
 
