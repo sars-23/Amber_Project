@@ -95,6 +95,16 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatus(org.springframework.web.server.ResponseStatusException ex) {
+        log.warn("Response status exception: {} - {}", ex.getStatusCode(), ex.getReason());
+        return ResponseEntity.status(ex.getStatusCode()).body(Map.of(
+                "error", ex.getStatusCode().toString(),
+                "message", ex.getReason() != null ? ex.getReason() : ex.getMessage(),
+                "timestamp", Instant.now()
+        ));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
         log.error("Internal server error: {}", ex.getMessage(), ex);

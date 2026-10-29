@@ -59,6 +59,23 @@ class OpenMusicControllerSecurityTest {
     }
 
     @Test
+    @DisplayName("Search endpoint returns 503 Service Unavailable when Jamendo is unconfigured")
+    void searchEndpointReturnsServiceUnavailableWhenUnconfigured() throws Exception {
+        rateLimiter.reset();
+        when(openMusicImportService.search(any(), anyInt()))
+                .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "Jamendo search is not configured. Set JAMENDO_CLIENT_ID on the Amber backend."));
+
+        mockMvc.perform(get("/api/v1/open-music/search")
+                        .param("q", "rock")
+                        .param("limit", "10"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
+                        .value("Jamendo search is not configured. Set JAMENDO_CLIENT_ID on the Amber backend."));
+    }
+
+    @Test
     @DisplayName("Search endpoint enforces rate limiting with 429 and Retry-After header")
     void searchEndpointEnforcesRateLimit() throws Exception {
         rateLimiter.reset();
