@@ -159,4 +159,25 @@ class OpenMusicControllerSecurityTest {
         mockMvc.perform(post("/api/v1/open-music/jobs/" + jobId + "/cancel"))
                 .andExpect(status().isUnauthorized());
     }
+
+    @Test
+    @DisplayName("TrackEligibilityException surfaces HTTP 422 with trackId and reasonCode")
+    void trackEligibilityExceptionReturnsStructuredError() throws Exception {
+        when(openMusicImportService.createJob(any()))
+                .thenThrow(new TrackEligibilityException("121711", TrackRejectionReason.DOWNLOAD_NOT_ALLOWED,
+                        "Track 121711 cannot be downloaded because the artist has disabled downloads on Jamendo."));
+
+        OpenMusicImportController.CreateImportRequest request =
+                new OpenMusicImportController.CreateImportRequest(List.of("121711"));
+        String json = objectMapper.writeValueAsString(request);
+
+        mockMvc.perform(post("/api/v1/open-music/jobs")
+                        .header("X-Amber-Admin-Key", TEST_ADMIN_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.trackId").value("121711"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.reasonCode").value("DOWNLOAD_NOT_ALLOWED"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Track 121711 cannot be downloaded because the artist has disabled downloads on Jamendo."));
+    }
 }

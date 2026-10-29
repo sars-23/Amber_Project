@@ -28,14 +28,19 @@ public class JamendoClient {
     private final HttpClient httpClient;
     private final String clientId;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public JamendoClient(ObjectMapper objectMapper,
                          @Value("${amber.jamendo.client-id:}") String clientId) {
-        this.objectMapper = objectMapper;
-        this.clientId = clientId == null ? "" : clientId.trim();
-        this.httpClient = HttpClient.newBuilder()
+        this(objectMapper, clientId, HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+                .build());
+    }
+
+    public JamendoClient(ObjectMapper objectMapper, String clientId, HttpClient httpClient) {
+        this.objectMapper = objectMapper;
+        this.clientId = clientId == null ? "" : clientId.trim();
+        this.httpClient = httpClient;
     }
 
     public boolean isConfigured() {
@@ -68,10 +73,14 @@ public class JamendoClient {
         if (id == null || !id.matches("[0-9]{1,20}")) {
             return Optional.empty();
         }
-        String url = API_BASE + "?client_id=" + encode(clientId) + "&format=json&limit=1&id=" + id
+        String url = API_BASE + "?client_id=" + encode(clientId) + "&format=json&limit=1&id=" + encode(id) + "&id[]=" + encode(id)
                 + "&type=single+albumtrack&audioformat=mp32&audiodlformat=mp32";
-        List<JamendoTrack> tracks = parsePermittedTracks(getJson(url));
-        return tracks.stream().filter(t -> t.id().equals(id)).findFirst();
+        try {
+            List<JamendoTrack> tracks = verifyTrackList(List.of(id), getJson(url));
+            return tracks.stream().findFirst();
+        } catch (TrackEligibilityException ex) {
+            return Optional.empty();
+        }
     }
 
     /** Revalidates an entire selected batch in one Jamendo request rather than trusting browser metadata. */
@@ -81,22 +90,74 @@ public class JamendoClient {
                 || ids.stream().anyMatch(id -> id == null || !id.matches("[0-9]{1,20}"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Jamendo track IDs.");
         }
-        // Jamendo represents array parameters as plus-separated values.
-        String joinedIds = String.join("+", ids);
-        String url = API_BASE + "?client_id=" + encode(clientId) + "&format=json&limit=25&id=" + joinedIds
+        StringBuilder idParams = new StringBuilder();
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) idParams.append("&");
+            idParams.append("id[]=").append(encode(ids.get(i)));
+        }
+        if (ids.size() == 1) {
+            idParams.append("&id=").append(encode(ids.get(0)));
+        }
+        String url = API_BASE + "?client_id=" + encode(clientId) + "&format=json&limit=" + Math.max(25, ids.size())
+                + "&" + idParams
                 + "&type=single+albumtrack&audioformat=mp32&audiodlformat=mp32";
-        List<JamendoTrack> tracks = parsePermittedTracks(getJson(url));
-        Map<String, JamendoTrack> byId = new HashMap<>();
-        for (JamendoTrack track : tracks) byId.put(track.id(), track);
+        return verifyTrackList(ids, getJson(url));
+    }
+
+    public List<JamendoTrack> verifyTrackList(List<String> ids, JsonNode root) {
+        JsonNode resultsNode = root.path("results");
+        Map<String, JsonNode> rawTracksById = new HashMap<>();
+        if (resultsNode.isArray()) {
+            for (JsonNode item : resultsNode) {
+                String id = text(item, "id");
+                if (!id.isBlank()) {
+                    rawTracksById.put(id, item);
+                }
+            }
+        }
+
         List<JamendoTrack> verified = new ArrayList<>();
         for (String id : ids) {
-            JamendoTrack track = byId.get(id);
-            if (track == null) {
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "Track " + id + " is no longer downloadable under Amber's supported license policy.");
+            JsonNode item = rawTracksById.get(id);
+            if (item == null) {
+                throw new TrackEligibilityException(id, TrackRejectionReason.TRACK_NOT_RETURNED,
+                        "Track " + id + " was not found on Jamendo.");
             }
-            verified.add(track);
+
+            String title = text(item, "name");
+            String artist = text(item, "artist_name");
+            if (title.isBlank() || artist.isBlank()) {
+                throw new TrackEligibilityException(id, TrackRejectionReason.INVALID_METADATA,
+                        "Track " + id + " is missing required title or artist metadata.");
+            }
+
+            boolean downloadAllowed = item.path("audiodownload_allowed").asBoolean(false);
+            if (!downloadAllowed) {
+                throw new TrackEligibilityException(id, TrackRejectionReason.DOWNLOAD_NOT_ALLOWED,
+                        "Track " + id + " cannot be downloaded because the artist has disabled downloads on Jamendo.");
+            }
+
+            String downloadUrl = text(item, "audiodownload");
+            if (downloadUrl.isBlank()) {
+                throw new TrackEligibilityException(id, TrackRejectionReason.DOWNLOAD_URL_MISSING,
+                        "Track " + id + " does not provide an audio download URL.");
+            }
+
+            String licenseUrl = text(item, "license_ccurl");
+            if (!JamendoLicensePolicy.isImportAllowed(licenseUrl)) {
+                String displayedLicense = licenseUrl.isBlank() ? "none" : licenseUrl;
+                throw new TrackEligibilityException(id, TrackRejectionReason.UNSUPPORTED_LICENSE,
+                        "Track " + id + " has license '" + displayedLicense + "', which is not eligible. Only CC BY and CC BY-SA licenses are supported.");
+            }
+
+            String sourceUrl = text(item, "shareurl");
+            if (sourceUrl.isBlank()) sourceUrl = "https://www.jamendo.com/track/" + id;
+            int duration = Math.max(0, item.path("duration").asInt(0));
+            String album = text(item, "album_name");
+            String attribution = artist + " — " + title + "; source: " + sourceUrl + "; license: " + licenseUrl;
+            verified.add(new JamendoTrack(id, title, artist, album, duration, downloadUrl, sourceUrl, licenseUrl, attribution));
         }
+
         return verified;
     }
 
@@ -126,7 +187,8 @@ public class JamendoClient {
             JsonNode root = objectMapper.readTree(response.body());
             String apiStatus = root.path("headers").path("status").asText("success");
             if (!"success".equalsIgnoreCase(apiStatus)) {
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Jamendo API reported an unsuccessful response.");
+                String errorMsg = root.path("headers").path("error_message").asText("Jamendo API reported an unsuccessful response.");
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, errorMsg);
             }
             return root;
         } catch (ResponseStatusException ex) {
