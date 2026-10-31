@@ -59,7 +59,7 @@ const INITIAL_DIAGNOSTICS: StreamDiagnostics = {
   receivedSamples: 0,
 };
 
-// Inline AudioWorklet processor definition with steep anti-aliasing polyphase windowed-sinc resampler
+// Inline AudioWorklet processor definition with genuinely symmetric polyphase windowed-sinc resampler
 const WORKLET_PROCESSOR_CODE = `
 class PcmCaptureProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -69,43 +69,53 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     this.outputBuffer = new Int16Array(this.bufferSize);
     this.outputIndex = 0;
 
-    this.M = 16;
-    this.twoM = 32;
-    this.P = 128;
-    this.phase = 0.0;
-    this.history = new Float32Array(this.twoM);
-
     const currentRate = typeof sampleRate !== 'undefined' ? sampleRate : 48000;
     this.inputRate = currentRate;
     this.ratio = this.inputRate / this.targetRate;
 
-    const effectiveCutoff = Math.min(5000, (this.targetRate / 2) * 0.95);
+    this.M = this.inputRate >= 88200 ? 128 : 64;
+    this.numTaps = 2 * this.M + 1;
+    this.P = 128;
+    this.phase = 0.0;
+    this.history = new Float32Array(this.numTaps);
+
+    this.dcR = Math.max(0.99, 1.0 - (2.0 * Math.PI * 20.0 / this.inputRate));
+    this.dcXPrev = 0.0;
+    this.dcYPrev = 0.0;
+
+    const effectiveCutoff = Math.min(4800, (this.targetRate / 2) * 0.92);
     const normalizedCutoff = effectiveCutoff / this.inputRate;
-    this.polyTable = new Float32Array(this.P * this.twoM);
+    this.polyTable = new Float32Array(this.P * this.numTaps);
 
     for (let p = 0; p < this.P; p++) {
       const frac = p / this.P;
-      const offset = p * this.twoM;
+      const offset = p * this.numTaps;
       let sum = 0.0;
 
-      for (let k = -this.M; k < this.M; k++) {
+      for (let idx = 0; idx < this.numTaps; idx++) {
+        const k = idx - this.M;
         const t = k - frac;
-        let sinc = 1.0;
-        if (Math.abs(t) > 1e-9) {
-          sinc = Math.sin(2.0 * Math.PI * normalizedCutoff * t) / (Math.PI * t);
+
+        let sincVal;
+        if (Math.abs(t) < 1e-9) {
+          sincVal = 2.0 * normalizedCutoff;
+        } else {
+          sincVal = Math.sin(2.0 * Math.PI * normalizedCutoff * t) / (Math.PI * t);
         }
-        const wArg = (t + this.M) / this.twoM;
+
+        const wArg = Math.abs(t) / this.M;
         let win = 0.0;
-        if (wArg >= 0.0 && wArg <= 1.0) {
-          win = 0.42 - 0.5 * Math.cos(2.0 * Math.PI * wArg) + 0.08 * Math.cos(4.0 * Math.PI * wArg);
+        if (wArg <= 1.0) {
+          win = 0.42 + 0.5 * Math.cos(Math.PI * wArg) + 0.08 * Math.cos(2.0 * Math.PI * wArg);
         }
-        const tapVal = sinc * win;
-        this.polyTable[offset + (k + this.M)] = tapVal;
+
+        const tapVal = sincVal * win;
+        this.polyTable[offset + idx] = tapVal;
         sum += tapVal;
       }
 
       if (sum !== 0.0) {
-        for (let j = 0; j < this.twoM; j++) {
+        for (let j = 0; j < this.numTaps; j++) {
           this.polyTable[offset + j] /= sum;
         }
       }
@@ -129,19 +139,26 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     if (channelLength === 0) return true;
 
     const monoInput = new Float32Array(channelLength);
-    for (let i = 0; i < channelLength; i++) {
-      let monoSample = 0;
-      for (let ch = 0; ch < numChannels; ch++) {
-        monoSample += input[ch][i];
-      }
-      monoSample /= numChannels;
-      monoInput[i] = monoSample;
+    const R = this.dcR;
 
-      const absSample = Math.abs(monoSample);
+    for (let i = 0; i < channelLength; i++) {
+      let rawSample = 0;
+      for (let ch = 0; ch < numChannels; ch++) {
+        rawSample += input[ch][i];
+      }
+      rawSample /= numChannels;
+
+      const dcFiltered = rawSample - this.dcXPrev + R * this.dcYPrev;
+      this.dcXPrev = rawSample;
+      this.dcYPrev = dcFiltered;
+
+      monoInput[i] = dcFiltered;
+
+      const absSample = Math.abs(dcFiltered);
       if (absSample > this.intervalPeak) this.intervalPeak = absSample;
       if (absSample >= 0.999) this.intervalClipped++;
       if (absSample < 1e-5) this.intervalZeros++;
-      this.intervalSumSq += monoSample * monoSample;
+      this.intervalSumSq += dcFiltered * dcFiltered;
     }
     this.intervalTotal += channelLength;
 
@@ -156,20 +173,20 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    const fullLen = this.twoM + channelLength;
+    const fullLen = this.numTaps + channelLength;
     const fullBuf = new Float32Array(fullLen);
     fullBuf.set(this.history, 0);
-    fullBuf.set(monoInput, this.twoM);
+    fullBuf.set(monoInput, this.numTaps);
 
-    while (this.phase + this.M <= fullLen - this.M) {
+    while (this.phase + this.M <= fullLen - 1 - this.M) {
       const center = this.phase + this.M;
       const idx = Math.floor(center);
       const frac = center - idx;
       const pIdx = Math.min(this.P - 1, Math.max(0, Math.floor(frac * this.P)));
-      const pOffset = pIdx * this.twoM;
+      const pOffset = pIdx * this.numTaps;
 
       let conv = 0.0;
-      for (let k = 0; k < this.twoM; k++) {
+      for (let k = 0; k < this.numTaps; k++) {
         conv += fullBuf[idx - this.M + k] * this.polyTable[pOffset + k];
       }
 
@@ -184,7 +201,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     }
 
     this.phase -= channelLength;
-    this.history.set(fullBuf.subarray(fullLen - this.twoM));
+    this.history.set(fullBuf.subarray(fullLen - this.numTaps));
     return true;
   }
 
