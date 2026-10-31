@@ -57,9 +57,14 @@ In production (`AudioMatchingService`), matching operates against the persistent
   *(Plus post-acceptance database integrity verification `GATE_6_CATALOGUE_NOT_FOUND`)*
 - **Production Confidence Formula**:
   $$\text{Confidence}_{\text{production}} = 0.50 \cdot \min\left(1.0, \frac{\text{PeakVotes}}{30}\right) + 0.50 \cdot \min\left(1.0, \text{Margin}\right)$$
-- **Measured Latency Profile**:
-  - Pure database query & histogram evaluation: Typically $20 - 45\text{ ms}$ on indexed candidate lookups.
-  - End-to-end HTTP/REST request roundtrip (including FFmpeg upload decoding and network transport): Typically $300 - 800\text{ ms}$.
+- **Latency Factors & Runtime Diagnostics**:
+  Observed recognition latency is not a static constant; it varies dynamically based on:
+  1. **Input Excerpt Length & Feature Density**: Longer query snippets or musically dense sections extract more constellation hashes, scaling both database query parameter lists and candidate evaluation loops.
+  2. **Database Engine & Connection Pool State**: Neon serverless compute state (active vs. waking compute), connection pool acquisition overhead, and PostgreSQL buffer cache hit rates.
+  3. **Candidate Volume & Selectivity**: The number of matching candidate fingerprints retrieved for the query hashes across the reference catalogue.
+  4. **Network & Ingestion Overhead**: Client-to-server TLS latency, file upload transfer time, and FFmpeg audio container decoding inside the backend container.
+  
+  Because no fixed static range can accurately capture all query lengths, network topologies, and cold-start conditions, Amber exposes real-time measurement diagnostics directly in API responses (`executionTimeMs`) and in the frontend **Developer Matching Diagnostics** panel (`Latency`, `Query Fingerprints`, `Candidate Rows`). Production users and evaluators should inspect these runtime diagnostic measurements for their specific deployment environment and query inputs.
 
 ---
 

@@ -157,7 +157,7 @@ Amber enforces automated quality gates in GitHub Actions CI with zero external t
 
 ### B. Three Detailed Technical Resume Bullets
 - **High-Performance Signal Processing**: Engineered a pure Java digital signal processing pipeline (Radix-2 Cooley–Tukey FFT, periodic Hann windowing, and 10-band logarithmic peak extraction) executing in-place 1,024-point transforms with zero per-frame allocation and zero external math dependencies.
-- **Algorithmic Invariant & Combinatorial Hashing**: Designed a 32-bit forward-constellation hashing scheme and relational B-Tree inverted index in PostgreSQL, resolving a critical vote multiplication defect via independent query coordinates to achieve $7–17\text{ ms}$ in-memory algorithmic search latency.
+- **Algorithmic Invariant & Combinatorial Hashing**: Designed a 32-bit forward-constellation hashing scheme and relational B-Tree inverted index in PostgreSQL, resolving a critical vote multiplication defect via independent query coordinates to eliminate false rejections on dense tracks.
 - **Real-Time Full-Stack Streaming**: Built a continuous live microphone streaming pipeline utilizing a 128-phase Blackman-windowed sinc polyphase resampler in Web Audio `AudioWorklet`, streaming 11,025 Hz PCM frames over WebSockets to a Spring Boot circular session buffer with multi-factor false-positive rejection.
 
 ---
