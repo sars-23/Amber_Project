@@ -11,6 +11,9 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs, parameters) {
+    if (outputs[0] && outputs[0][0]) {
+      outputs[0][0].fill(0);
+    }
     const input = inputs[0];
     if (!input || input.length === 0) return true;
 
