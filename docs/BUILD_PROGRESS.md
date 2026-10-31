@@ -61,3 +61,8 @@
   - Created portfolio engineering case study with resume bullets and 5 technical interview Q&As (`docs/PORTFOLIO_CASE_STUDY.md`).
   - Added comprehensive Mermaid architecture and sequence diagrams across documentation.
   - Verified 100% pass rate across all 286 tests in CI.
+- [x] **Phase 14 — Amber v1 Final Release Freeze (PR #13)**
+  - Audited and aligned API contracts across backend DTOs (`MatchResponse`, `BenchmarkResponse`) and documentation.
+  - Corrected timing field names (`searchDurationMs`, `processingTimeMs`) and removed invalid references (`executionTimeMs`, `effectiveSnrDb`, `topOffsetBuckets`).
+  - Documented exact measurement boundaries between production matching and in-memory Noise Lab benchmarking.
+  - Finalized technical portfolio package, confirmed 100% CI pass rate, and declared Amber v1 scope frozen.

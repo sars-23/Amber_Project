@@ -64,7 +64,13 @@ In production (`AudioMatchingService`), matching operates against the persistent
   3. **Candidate Volume & Selectivity**: The number of matching candidate fingerprints retrieved for the query hashes across the reference catalogue.
   4. **Network & Ingestion Overhead**: Client-to-server TLS latency, file upload transfer time, and FFmpeg audio container decoding inside the backend container.
   
-  Because no fixed static range can accurately capture all query lengths, network topologies, and cold-start conditions, Amber exposes real-time measurement diagnostics directly in API responses (`executionTimeMs`) and in the frontend **Developer Matching Diagnostics** panel (`Latency`, `Query Fingerprints`, `Candidate Rows`). Production users and evaluators should inspect these runtime diagnostic measurements for their specific deployment environment and query inputs.
+  Because no fixed static range can accurately capture all query lengths, network topologies, and cold-start conditions, Amber exposes real-time measurement diagnostics directly in API responses (`searchDurationMs` and backwards-compatible property `processingTimeMs`) and in the frontend **Developer Matching Diagnostics** panel (`Latency`, `Query Fingerprints`, `Candidate Rows`). Production users and evaluators should inspect these runtime diagnostic measurements for their specific deployment environment and query inputs.
+
+> [!NOTE]
+> **Measurement Boundaries**:
+> The `searchDurationMs` field in `MatchResponse` measures matching execution inside `AudioMatchingService.matchFingerprints()` (candidate batch retrieval from PostgreSQL, independent query coordinate accumulation, offset histogram calculation, and acceptance gate evaluations). It begins **after** audio decoding and STFT query fingerprint extraction have completed, and does not measure client-to-server HTTP network transport.
+>
+> In contrast, `searchDurationMs` in `BenchmarkResponse` measures the entire in-memory test bench execution inside `RobustnessBenchmarkService.runBenchmark()`, including PCM slicing, deterministic Gaussian noise synthesis (`Random(1337)`), query fingerprint generation, and local hash-map offset matching. These two measurements evaluate fundamentally different pipeline scopes and must not be directly compared.
 
 ---
 
