@@ -14,9 +14,9 @@ $$f_{\text{Nyquist}} = \frac{f_s}{2} = 5,512.5\text{ Hz}$$
 This bandwidth captures fundamental musical frequencies and harmonic overtones up to $5.5\text{ kHz}$ (covering the full standard 88-key piano range where the highest note $C_8 \approx 4,186\text{ Hz}$), while minimizing STFT buffer memory and database storage footprint.
 
 ### 1.2 Polyphase Resampling in the Browser
-When capturing microphone audio at hardware rates (typically $48,000\text{ Hz}$ or $44,100\text{ Hz}$), live downsampling is executed using a **128-phase Kaiser-windowed polyphase FIR filter**:
-- **Filter Cutoff**: $f_{\text{cutoff}} \approx 4,500\text{ Hz}$ (preventing aliasing below $5,512.5\text{ Hz}$).
-- **Stopband Attenuation**: $\ge 50\text{ dB}$ across all 128 phases at frequencies $\ge 5,750\text{ Hz}$.
+When capturing microphone audio at hardware rates (typically $48,000\text{ Hz}$ or $44,100\text{ Hz}$), live downsampling is executed using a **128-phase Blackman-windowed sinc polyphase FIR filter**:
+- **Filter Cutoff**: $f_{\text{cutoff}} = 4,800\text{ Hz}$ for $44.1\text{ kHz}$ and $48\text{ kHz}$ inputs targeting $11,025\text{ Hz}$ (configured as $\min(4800, (f_{\text{target}}/2) \times 0.92) = 4,800\text{ Hz}$, providing steep attenuation before the $5,512.5\text{ Hz}$ Nyquist frequency).
+- **Stopband Verification**: Verified via unit tests (`frontend/test/resampler.test.mjs`) confirming stopband attenuation $\ge 50\text{ dB}$ across all 128 phases at five discrete sampled frequencies ($5,750\text{ Hz}$, $6,000\text{ Hz}$, $8,000\text{ Hz}$, $12,000\text{ Hz}$, and $16,000\text{ Hz}$) for both $44.1\text{ kHz}$ and $48\text{ kHz}$ inputs.
 - **DC Blocker**: First-order high-pass IIR filter ($f_c \approx 20\text{ Hz}$) eliminating hardware ADC DC offset:
   $$y[n] = x[n] - x[n-1] + R \cdot y[n-1], \quad R = 1 - \frac{2\pi \cdot 20}{f_s}$$
 
@@ -161,40 +161,40 @@ $$\text{Confidence} = 0.50 \cdot \min\left(1.0, \frac{\text{PeakVotes}}{30}\righ
 
 ---
 
-## 7. Multi-Factor False-Positive Acceptance Gates
+## 7. Multi-Factor False-Positive Acceptance Gates & Catalogue Verification
 
-To guarantee that random background noise or unindexed music is never misidentified, candidate matches must pass **5 sequential acceptance gates**:
+To guarantee that random background noise or unindexed music is never misidentified, candidate matches must satisfy **5 sequential acoustic acceptance gates**, followed by a post-acceptance database integrity verification:
 
 ```
 Candidate Match Evaluation
          │
          ▼
-[Gate 1: Peak Votes >= 4] ───────────────────────► REJECT: Insufficient time-coherent votes
+[Gate 1: Peak Votes >= 4] ───────────────────────► REJECT (GATE_1_PEAK_VOTES): Insufficient time-coherent votes
          │ (PASS)
          ▼
-[Gate 2: Score >= 3.0] ──────────────────────────► REJECT: Coherence score below threshold
+[Gate 2: Score >= 3.0] ──────────────────────────► REJECT (GATE_2_SCORE): Coherence score below threshold
          │ (PASS)
          ▼
-[Gate 3: Coherence Ratio >= 0.05] ───────────────► REJECT: Offset scatter indicates random collisions
+[Gate 3: Coherence Ratio >= 0.05] ───────────────► REJECT (GATE_3_COHERENCE_RATIO): Offset scatter indicates random collisions
          │ (PASS)
          ▼
-[Gate 4: Ambiguity Margin >= 0.15] ──────────────► REJECT: Ambiguous candidates exhibit comparable correlation
+[Gate 4: Ambiguity Margin >= 0.15] ──────────────► REJECT (GATE_4_AMBIGUITY): Ambiguous candidates exhibit comparable correlation
          │ (PASS)
          ▼
-[Gate 5: Confidence >= 0.35] ────────────────────► REJECT: Composite confidence below acceptance threshold
+[Gate 5: Confidence >= 0.35] ────────────────────► REJECT (GATE_5_CONFIDENCE): Composite confidence below acceptance threshold
          │ (PASS)
          ▼
-[Gate 6: Catalogue Record Exists] ───────────────► REJECT: Catalogue metadata not found
+[Integrity Check: Catalogue Record Exists] ──────► REJECT (GATE_6_CATALOGUE_NOT_FOUND): Catalogue metadata not found
          │ (PASS)
          ▼
     MATCH CONFIRMED (HTTP 200 / MATCH_UPDATE matched=true)
 ```
 
-| Gate Name | Parameter / Metric | Threshold | Purpose |
-|---|---|---|---|
-| **Gate 1** | `winningPeakVotes` | $\ge 4$ | Minimum aligned acoustic feature pairs in a single $100\text{ ms}$ bucket. |
-| **Gate 2** | `winningScore` | $\ge 3.0$ | Time-coherent score penalized by median background noise scatter. |
-| **Gate 3** | `coherenceRatio` | $\ge 0.05$ (5.0%) | Rejects random background hash collisions dispersed across time. |
-| **Gate 4** | `margin` | $\ge 0.15$ (15.0%) | Rejects ambiguous ties when runner-up score $\ge 2.0$ and margin $< 0.15$. |
-| **Gate 5** | `confidence` | $\ge 0.35$ (35.0%) | Composite threshold combining peak prominence and candidate margin. |
-| **Gate 6** | `songRepository.findById` | Exists | Verifies winning song metadata is active and intact in PostgreSQL. |
+| Gate / Check Name | Parameter / Metric | Threshold | Gate Classification | Purpose |
+|---|---|---|---|---|
+| **Gate 1** | `winningPeakVotes` | $\ge 4$ | Acoustic Acceptance Gate | Minimum aligned acoustic feature pairs in a single $100\text{ ms}$ bucket. |
+| **Gate 2** | `winningScore` | $\ge 3.0$ | Acoustic Acceptance Gate | Time-coherent score penalized by median background noise scatter. |
+| **Gate 3** | `coherenceRatio` | $\ge 0.05$ (5.0%) | Acoustic Acceptance Gate | Rejects random background hash collisions dispersed across time. |
+| **Gate 4** | `margin` | $\ge 0.15$ (15.0%) | Acoustic Acceptance Gate | Rejects ambiguous ties when runner-up score $\ge 2.0$ and margin $< 0.15$. |
+| **Gate 5** | `confidence` | $\ge 0.35$ (35.0%) | Acoustic Acceptance Gate | Composite threshold combining peak prominence and candidate margin. |
+| **Integrity Check** (`GATE_6_CATALOGUE_NOT_FOUND`) | `songRepository.findById` | Exists in DB | Database Integrity Check | Post-acceptance integrity verification confirming winning metadata remains active in PostgreSQL. |

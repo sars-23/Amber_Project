@@ -23,7 +23,7 @@ flowchart TD
     end
 
     subgraph Database["Neon Serverless PostgreSQL (PostgreSQL 16)"]
-        NeonDB[("Primary Database\n(35 Tracks, 3.32M Fingerprints)")]
+        NeonDB[("Primary Database\n(35 Tracks, 3.32M Fingerprints\nsnapshot dated 2026-10-31)")]
         BTreeIndex["Composite B-Tree Index\nidx_fingerprints_hash_song"]
     end
 

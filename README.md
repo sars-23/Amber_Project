@@ -30,7 +30,7 @@ Instead of delegating to third-party recognition APIs or external numeric math p
 | Reference Music Library | Audio File Drag-and-Drop Search |
 | :---: | :---: |
 | ![Reference Music Library](docs/assets/music_library_catalog.png) | ![Audio File Drag-and-Drop Search](docs/assets/file_audio_search.png) |
-| *B-tree indexed constellation catalog with admin-key authorization* | *Low-latency candidate retrieval and time-offset alignment (7–17 ms algorithmic latency)* |
+| *B-tree indexed constellation catalog with admin-key authorization* | *Candidate retrieval and time-offset alignment with interactive histogram visualization* |
 
 ---
 
@@ -46,7 +46,7 @@ Instead of delegating to third-party recognition APIs or external numeric math p
   3. `Coherence Ratio` ($\ge 5.0\%$ of candidate unique query support)
   4. `Ambiguity Margin` ($\ge 15.0\%$ separation over runner-up)
   5. `Composite Confidence` ($\ge 35.0\%$)
-- **Live Browser Microphone Recognition**: Continuous 11,025 Hz mono PCM streaming via a native 128-phase Kaiser-windowed polyphase resampler in Web Audio `AudioWorklet` (with `ScriptProcessor` fallback) over bidirectional WebSockets.
+- **Live Browser Microphone Recognition**: Continuous 11,025 Hz mono PCM streaming via a native 128-phase Blackman-windowed sinc polyphase resampler (4,800 Hz cutoff) in Web Audio `AudioWorklet` (with `ScriptProcessor` fallback) over bidirectional WebSockets.
 - **Audio File Drag-and-Drop Search**: Identifies audio excerpts (WAV, MP3, FLAC, OGG, M4A) with sub-second response times and visual offset histogram charts.
 - **Noise Lab Benchmark Suite**: In-memory acoustic stress-testing harness simulating real-world degradation by mixing additive white Gaussian noise at configurable Signal-to-Noise Ratios (from $+50\text{ dB}$ down to $-10\text{ dB}$).
 - **Bulk Music Importer**: Batch-ingestion CLI and frontend interface with automated preflight validation, filename metadata extraction, and fail-closed duplicate detection against catalogue records.
@@ -97,7 +97,7 @@ flowchart TD
 | **Audio & Math** | Pure Java Radix-2 FFT, Hann Windowing, Alpine FFmpeg (Docker decoder) |
 | **Persistence** | PostgreSQL 16 (Neon Serverless), Flyway Database Migrations (v3 schema), HikariCP |
 | **Frontend Core** | React 19.3, TypeScript 6.0, Vite 5.4, Tailwind CSS 3.4, Lucide React |
-| **Browser Audio** | Web Audio API, `AudioWorklet` with 128-phase Kaiser polyphase filter, HTML5 Canvas oscilloscope |
+| **Browser Audio** | Web Audio API, `AudioWorklet` with 128-phase Blackman polyphase filter, HTML5 Canvas oscilloscope |
 | **DevOps & Cloud** | Docker multi-stage builds, Render (Web Service & Static Site), GitHub Actions CI |
 
 ---
@@ -180,7 +180,7 @@ Status: 100% Passed (8.3s execution time)
 
 ## Known Limitations
 
-- **Curated Demonstration Catalogue**: The live production catalogue hosted on Neon PostgreSQL contains a curated demonstration set (35 songs, ~3.3M fingerprints), not a commercial-scale music database.
+- **Curated Demonstration Catalogue**: The live production catalogue hosted on Neon PostgreSQL contains a curated demonstration set (snapshot of 35 songs, ~3.32M fingerprints as of October 2026; query the live `/api/v1/stats` endpoint for current dynamic metrics), not a commercial-scale music database.
 - **Closed-World Recognition**: Recognition strictly identifies recordings present within the indexed reference catalogue. Recordings not present will be rejected by the false-positive protection gates.
 - **Synthetic Reference in Noise Lab**: The interactive Noise Lab defaults to an in-memory 12-second multi-tone acoustic symphony (`SyntheticAudioGenerator`) for deterministic evaluation without database queries. Custom audio references up to 10 MB are supported.
 - **Free-Tier Cold Starts**: Render's free tier spins down the backend container after 15 minutes of inactivity. Initial requests after sleep may take ~30–50 seconds to boot the JVM and establish database connection pools.
