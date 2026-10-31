@@ -183,8 +183,16 @@ export function checkDuplicates(
     existingCatalog.map((s) => getNormalizedKey(s.title, s.artist))
   );
 
+  // Treat successfully indexed queue items as existing catalogue keys
+  for (const item of items) {
+    if (item.status === 'indexed') {
+      catalogKeys.add(getNormalizedKey(item.title, item.artist));
+    }
+  }
+
   const batchKeyCounts = new Map<string, number>();
   for (const item of items) {
+    if (item.status === 'indexed') continue;
     const key = getNormalizedKey(item.title, item.artist);
     batchKeyCounts.set(key, (batchKeyCounts.get(key) || 0) + 1);
   }
@@ -192,6 +200,15 @@ export function checkDuplicates(
   const seenBatchKeys = new Set<string>();
 
   return items.map((item) => {
+    if (item.status === 'indexed') {
+      return {
+        ...item,
+        isDuplicate: false,
+        duplicateType: undefined,
+        duplicateInfo: undefined,
+      };
+    }
+
     const key = getNormalizedKey(item.title, item.artist);
 
     if (catalogKeys.has(key)) {
