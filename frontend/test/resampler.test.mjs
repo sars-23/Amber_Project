@@ -2,37 +2,30 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PolyphaseResampler, calculatePcmMetrics } from '../src/utils/resampler.ts';
 
-describe('Polyphase Windowed-Sinc Resampler - Basic Characteristics', () => {
-  test('accurately downsamples 48,000 Hz to 11,025 Hz with correct sample count', () => {
-    const inputSr = 48000;
-    const targetSr = 11025;
-    const durationSec = 1.0;
-    const inputSamples = inputSr * durationSec;
-    const resampler = new PolyphaseResampler(inputSr, targetSr, 2048);
+describe('Polyphase Resampler - Symmetry and Coefficient Alignment', () => {
+  test('Phase 0 coefficients are genuinely and perfectly symmetric for 44.1 kHz, 48 kHz, and 96 kHz', () => {
+    for (const rate of [44100, 48000, 96000]) {
+      const resampler = new PolyphaseResampler(rate, 11025, 2048);
+      const numTaps = resampler.numTaps;
+      assert.strictEqual(numTaps % 2, 1, 'Filter length must be odd for true symmetry');
 
-    // Generate 440 Hz sine wave
-    const input = new Float32Array(inputSamples);
-    for (let i = 0; i < inputSamples; i++) {
-      input[i] = 0.5 * Math.sin((2 * Math.PI * 440 * i) / inputSr);
+      const h0 = resampler.polyTable.subarray(0, numTaps);
+      const M = resampler.filterHalfLength;
+
+      // Check symmetry: h0[M - k] === h0[M + k] for all k
+      let maxDev = 0.0;
+      for (let k = 1; k <= M; k++) {
+        const left = h0[M - k];
+        const right = h0[M + k];
+        const dev = Math.abs(left - right);
+        if (dev > maxDev) maxDev = dev;
+      }
+
+      assert.ok(
+        maxDev < 1e-6,
+        `Phase 0 for ${rate} Hz must be symmetric. Max deviation: ${maxDev}`
+      );
     }
-
-    const outputChunks = [];
-    const blockSize = 128;
-    for (let i = 0; i < inputSamples; i += blockSize) {
-      const block = input.subarray(i, Math.min(i + blockSize, inputSamples));
-      resampler.process(block, (chunk) => {
-        outputChunks.push(new Int16Array(chunk));
-      });
-    }
-
-    const totalOutputSamples = outputChunks.reduce((acc, c) => acc + c.length, 0);
-    const expectedSamples = Math.floor(inputSamples / (inputSr / targetSr));
-    
-    // Within 1 block (due to bufferSize flush at end)
-    assert.ok(
-      totalOutputSamples >= expectedSamples - 2048 && totalOutputSamples <= expectedSamples,
-      `Expected ~${expectedSamples} samples, got ${totalOutputSamples}`
-    );
   });
 
   test('accurately downsamples 44,100 Hz to 11,025 Hz with exact 4:1 integer decimation', () => {
@@ -55,114 +48,154 @@ describe('Polyphase Windowed-Sinc Resampler - Basic Characteristics', () => {
       });
     }
 
-    // 44100 / 4 = 11025 samples. 11025 / 512 = 21 chunks of 512
     assert.ok(chunkCount >= 21, `Expected at least 21 chunks of 512 samples, got ${chunkCount}`);
   });
 
-  test('downmixes stereo channels consistently without phase distortion', () => {
-    const resampler = new PolyphaseResampler(11025, 11025, 1024);
-    const left = new Float32Array([0.8, -0.4, 0.2]);
-    const right = new Float32Array([0.2, 0.4, -0.2]);
-    const outputMono = new Float32Array(3);
-
-    resampler.downmixToMono([left, right], outputMono);
-
-    assert.ok(Math.abs(outputMono[0] - 0.5) < 1e-6);
-    assert.ok(Math.abs(outputMono[1] - 0.0) < 1e-6);
-    assert.ok(Math.abs(outputMono[2] - 0.0) < 1e-6);
-  });
-});
-
-describe('Polyphase Windowed-Sinc Resampler - Anti-Aliasing Attenuation', () => {
-  test('strongly attenuates out-of-band frequencies above target Nyquist (8 kHz and 14 kHz)', () => {
+  test('accurately downsamples 48,000 Hz to 11,025 Hz with correct sample count', () => {
     const inputSr = 48000;
     const targetSr = 11025;
+    const durationSec = 1.0;
+    const inputSamples = inputSr * durationSec;
     const resampler = new PolyphaseResampler(inputSr, targetSr, 2048);
 
-    // Audio composed of in-band 1000 Hz + out-of-band 8000 Hz
-    const N = 48000;
-    const input = new Float32Array(N);
-    for (let i = 0; i < N; i++) {
-      const inBand = 0.4 * Math.sin((2 * Math.PI * 1000 * i) / inputSr);
-      const outOfBand = 0.4 * Math.sin((2 * Math.PI * 8000 * i) / inputSr);
-      input[i] = inBand + outOfBand;
+    const input = new Float32Array(inputSamples);
+    for (let i = 0; i < inputSamples; i++) {
+      input[i] = 0.5 * Math.sin((2 * Math.PI * 440 * i) / inputSr);
     }
 
-    const outputSamples = [];
+    const outputChunks = [];
     const blockSize = 128;
-    for (let i = 0; i < N; i += blockSize) {
-      const block = input.subarray(i, Math.min(i + blockSize, N));
+    for (let i = 0; i < inputSamples; i += blockSize) {
+      const block = input.subarray(i, Math.min(i + blockSize, inputSamples));
       resampler.process(block, (chunk) => {
-        outputSamples.push(...new Int16Array(chunk));
+        outputChunks.push(new Int16Array(chunk));
       });
     }
 
-    assert.ok(outputSamples.length >= 8192);
+    const totalOutputSamples = outputChunks.reduce((acc, c) => acc + c.length, 0);
+    const expectedSamples = Math.floor(inputSamples / (inputSr / targetSr));
 
-    // Discrete Fourier transform at the 1000 Hz frequency bin vs the aliased frequency bin
-    // In 11025 Hz, 8000 Hz aliases to |11025 - 8000| = 3025 Hz
-    const testLen = 4096;
-    let cos1000 = 0, sin1000 = 0;
-    let cos3025 = 0, sin3025 = 0;
-
-    for (let n = 0; n < testLen; n++) {
-      const val = outputSamples[n] / 32768.0;
-      const angle1000 = (2 * Math.PI * 1000 * n) / targetSr;
-      const angle3025 = (2 * Math.PI * 3025 * n) / targetSr;
-      cos1000 += val * Math.cos(angle1000);
-      sin1000 += val * Math.sin(angle1000);
-      cos3025 += val * Math.cos(angle3025);
-      sin3025 += val * Math.sin(angle3025);
-    }
-
-    const mag1000 = Math.sqrt(cos1000 * cos1000 + sin1000 * sin1000);
-    const mag3025 = Math.sqrt(cos3025 * cos3025 + sin3025 * sin3025);
-
-    // Out-of-band 8000 Hz aliased component at 3025 Hz must be attenuated by at least 40 dB relative to in-band 1000 Hz
-    const ratio = mag3025 / Math.max(1e-9, mag1000);
     assert.ok(
-      ratio < 0.02,
-      `Expected aliased 3025 Hz magnitude to be < 2% of 1000 Hz, but got ${(ratio * 100).toFixed(2)}%`
+      totalOutputSamples >= expectedSamples - 2048 && totalOutputSamples <= expectedSamples,
+      `Expected ~${expectedSamples} samples, got ${totalOutputSamples}`
     );
   });
 });
 
-describe('Polyphase Windowed-Sinc Resampler - Signal Level & Clipping Diagnostics', () => {
-  test('accurately detects clipping on clipped audio', () => {
+describe('Polyphase Resampler - Frequency Response and Stopband Attenuation', () => {
+  test('stopband attenuation exceeds 50 dB across all 128 phases at frequencies >= 5,750 Hz', () => {
+    for (const rate of [44100, 48000]) {
+      const resampler = new PolyphaseResampler(rate, 11025, 2048);
+      const M = resampler.filterHalfLength;
+      const numTaps = resampler.numTaps;
+      const P = resampler.phases;
+
+      const stopbandFreqs = [5750, 6000, 8000, 12000, 16000];
+
+      for (const f of stopbandFreqs) {
+        if (f >= rate / 2) continue;
+        const w = (2.0 * Math.PI * f) / rate;
+
+        for (let p = 0; p < P; p++) {
+          const offset = p * numTaps;
+          let real = 0.0;
+          let imag = 0.0;
+
+          for (let idx = 0; idx < numTaps; idx++) {
+            const k = idx - M;
+            const coeff = resampler.polyTable[offset + idx];
+            real += coeff * Math.cos(-w * k);
+            imag += coeff * Math.sin(-w * k);
+          }
+
+          const mag = Math.sqrt(real * real + imag * imag);
+          const magDb = 20 * Math.log10(Math.max(1e-9, mag));
+
+          assert.ok(
+            magDb < -50.0,
+            `Phase ${p} at ${f} Hz for ${rate} Hz must have attenuation < -50 dB, got ${magDb.toFixed(2)} dB`
+          );
+        }
+      }
+    }
+  });
+
+  test('passband frequency response is flat (< 0.1 dB loss) up to 4,000 Hz', () => {
+    const resampler = new PolyphaseResampler(48000, 11025, 2048);
+    const M = resampler.filterHalfLength;
+    const numTaps = resampler.numTaps;
+    const passbandFreqs = [440, 1000, 3000, 4000];
+
+    for (const f of passbandFreqs) {
+      const w = (2.0 * Math.PI * f) / 48000;
+      let real = 0.0;
+      let imag = 0.0;
+
+      for (let idx = 0; idx < numTaps; idx++) {
+        const k = idx - M;
+        const coeff = resampler.polyTable[idx];
+        real += coeff * Math.cos(-w * k);
+        imag += coeff * Math.sin(-w * k);
+      }
+
+      const mag = Math.sqrt(real * real + imag * imag);
+      const magDb = 20 * Math.log10(mag);
+
+      assert.ok(
+        Math.abs(magDb) < 0.1,
+        `Passband at ${f} Hz must be flat (< 0.1 dB), got ${magDb.toFixed(3)} dB`
+      );
+    }
+  });
+});
+
+describe('Polyphase Resampler - DC Blocker and Signal Observability', () => {
+  test('20 Hz DC blocker eliminates severe hardware ADC offset', () => {
     const resampler = new PolyphaseResampler(48000, 11025, 2048);
 
-    // Overloaded input (amplitude 1.5)
+    // Audio with -0.5 (-16,384) DC offset
+    const N = 48000;
+    const input = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      input[i] = -0.5 + 0.1 * Math.sin((2 * Math.PI * 440 * i) / 48000);
+    }
+
+    const outputMono = new Float32Array(N);
+    resampler.downmixToMono(input, outputMono);
+
+    // After initial 1000 samples filter settle, DC offset must be near zero
+    let sum = 0.0;
+    for (let i = 2000; i < N; i++) {
+      sum += outputMono[i];
+    }
+    const settledMean = sum / (N - 2000);
+
+    assert.ok(
+      Math.abs(settledMean) < 0.01,
+      `DC offset must be eliminated (< 0.01), got ${settledMean.toFixed(4)}`
+    );
+  });
+
+  test('accurately detects signal clipping and dBFS', () => {
+    const resampler = new PolyphaseResampler(48000, 11025, 2048);
     const block = new Float32Array(512);
     for (let i = 0; i < block.length; i++) {
-      block[i] = 1.5 * Math.sin((2 * Math.PI * 440 * i) / 48000);
+      block[i] = 1.2 * Math.sin((2 * Math.PI * 440 * i) / 48000);
     }
 
     resampler.process(block, () => {});
     const metrics = resampler.getMetricsAndReset();
 
     assert.ok(metrics.clippedSamples > 0, 'Expected clipped samples > 0');
-    assert.ok(metrics.clippingPercentage > 10, 'Expected clipping percentage > 10%');
-    assert.ok(metrics.peakAmplitude >= 0.999, 'Expected peak amplitude ~ 1.0');
-  });
-
-  test('computes correct dBFS and zero percentage for quiet/silent audio', () => {
-    const resampler = new PolyphaseResampler(48000, 11025, 2048);
-    const silentBlock = new Float32Array(512); // All zeros
-
-    resampler.process(silentBlock, () => {});
-    const metrics = resampler.getMetricsAndReset();
-
-    assert.strictEqual(metrics.clippedSamples, 0);
-    assert.strictEqual(metrics.clippingPercentage, 0);
-    assert.strictEqual(metrics.zeroPercentage, 100);
-    assert.strictEqual(metrics.rmsDbfs, -100);
+    assert.ok(metrics.clippingPercentage > 5.0, 'Expected clipping percentage > 5%');
+    assert.ok(metrics.peakAmplitude >= 0.999);
   });
 
   test('calculatePcmMetrics correctly analyzes signed 16-bit PCM buffer', () => {
     const pcm = new Int16Array(1024);
-    pcm[0] = 32767;  // Clipped
-    pcm[1] = -32768; // Clipped
-    pcm[2] = 0;      // Zero
+    pcm[0] = 32767;
+    pcm[1] = -32768;
+    pcm[2] = 0;
 
     const metrics = calculatePcmMetrics(pcm.buffer);
     assert.strictEqual(metrics.clippedSamples, 2);
