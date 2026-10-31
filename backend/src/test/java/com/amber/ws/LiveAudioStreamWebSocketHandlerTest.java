@@ -130,6 +130,24 @@ class LiveAudioStreamWebSocketHandlerTest {
     }
 
     @Test
+    @DisplayName("Should send STREAM_READY event when connection is established")
+    void shouldSendStreamReadyOnConnectionEstablished() throws Exception {
+        handler.afterConnectionEstablished(session);
+
+        ArgumentCaptor<TextMessage> textCaptor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(session).sendMessage(textCaptor.capture());
+
+        JsonNode responseNode = objectMapper.readTree(textCaptor.getValue().getPayload());
+        assertThat(responseNode.get("type").asText()).isEqualTo("STREAM_READY");
+        assertThat(responseNode.get("sessionId").asText()).isEqualTo("test-session-1");
+        assertThat(responseNode.get("targetSampleRate").asInt()).isEqualTo(11025);
+        assertThat(responseNode.get("minRecognitionSamples").asInt()).isEqualTo(22050);
+        assertThat(responseNode.get("minRecognitionDurationSec").asDouble()).isEqualTo(2.0);
+        assertThat(responseNode.get("windowCapacitySamples").asInt()).isEqualTo(44100);
+        assertThat(responseNode.has("message")).isTrue();
+    }
+
+    @Test
     @DisplayName("Should acknowledge RESET text message and clear buffer")
     void shouldAcknowledgeReset() throws Exception {
         handler.afterConnectionEstablished(session);
@@ -138,8 +156,44 @@ class LiveAudioStreamWebSocketHandlerTest {
         handler.handleTextMessage(session, resetMessage);
 
         ArgumentCaptor<TextMessage> textCaptor = ArgumentCaptor.forClass(TextMessage.class);
-        verify(session).sendMessage(textCaptor.capture());
+        verify(session, times(2)).sendMessage(textCaptor.capture());
 
         assertThat(textCaptor.getValue().getPayload()).contains("RESET_ACK");
+    }
+
+    @Test
+    @DisplayName("Should send structured STREAM_ERROR when matching throws exception")
+    void shouldSendStreamErrorWhenProcessingFails() throws Exception {
+        handler.afterConnectionEstablished(session);
+        when(session.isOpen()).thenReturn(true);
+
+        when(matchingService.matchPcm(any(PcmAudio.class)))
+                .thenThrow(new RuntimeException("Database matching failure"));
+
+        // Send enough audio to trigger evaluation (>= 22,050 samples)
+        int sampleCount = 25000;
+        ByteBuffer buffer = ByteBuffer.allocate(sampleCount * 2).order(ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i < sampleCount; i++) {
+            buffer.putShort((short) 500);
+        }
+        buffer.flip();
+
+        handler.handleBinaryMessage(session, new BinaryMessage(buffer));
+
+        ArgumentCaptor<TextMessage> textCaptor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(session, atLeast(2)).sendMessage(textCaptor.capture());
+
+        JsonNode lastResponse = objectMapper.readTree(textCaptor.getValue().getPayload());
+        assertThat(lastResponse.get("type").asText()).isEqualTo("STREAM_ERROR");
+        assertThat(lastResponse.get("error").asText()).isEqualTo("Audio processing failed");
+        assertThat(lastResponse.get("message").asText()).contains("Database matching failure");
+    }
+
+    @Test
+    @DisplayName("Should clean up session on connection closed")
+    void shouldCleanupSessionOnClose() throws Exception {
+        handler.afterConnectionEstablished(session);
+        handler.afterConnectionClosed(session, org.springframework.web.socket.CloseStatus.NORMAL);
+        // Cleaned up safely without error
     }
 }

@@ -53,6 +53,22 @@ public class LiveAudioStreamWebSocketHandler extends AbstractWebSocketHandler {
         }
         log.info("WebSocket audio stream session established: {}", session.getId());
         sessions.put(session.getId(), new SessionAudioBuffer(WINDOW_SAMPLES));
+
+        // Protocol observability: notify frontend that session is initialized and ready for streaming
+        Map<String, Object> readyResponse = new java.util.LinkedHashMap<>();
+        readyResponse.put("type", "STREAM_READY");
+        readyResponse.put("sessionId", session.getId());
+        readyResponse.put("targetSampleRate", SAMPLE_RATE);
+        readyResponse.put("minRecognitionSamples", MIN_RECOGNITION_SAMPLES);
+        readyResponse.put("minRecognitionDurationSec", (double) MIN_RECOGNITION_SAMPLES / SAMPLE_RATE);
+        readyResponse.put("windowCapacitySamples", WINDOW_SAMPLES);
+        readyResponse.put("windowCapacitySec", (double) WINDOW_SAMPLES / SAMPLE_RATE);
+        readyResponse.put("evalIntervalSamples", SessionAudioBuffer.EVAL_INTERVAL);
+        readyResponse.put("evalIntervalSec", (double) SessionAudioBuffer.EVAL_INTERVAL / SAMPLE_RATE);
+        readyResponse.put("message", "Audio stream initialized. Ready to receive 11,025 Hz 16-bit mono PCM chunks.");
+        readyResponse.put("timestamp", java.time.Instant.now().toString());
+
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(readyResponse)));
     }
 
     @Override
@@ -60,38 +76,53 @@ public class LiveAudioStreamWebSocketHandler extends AbstractWebSocketHandler {
         SessionAudioBuffer buffer = sessions.get(session.getId());
         if (buffer == null) return;
 
-        ByteBuffer byteBuffer = message.getPayload().order(ByteOrder.LITTLE_ENDIAN);
-        int shortCount = byteBuffer.remaining() / 2;
-        if (shortCount == 0) return;
+        try {
+            ByteBuffer byteBuffer = message.getPayload().order(ByteOrder.LITTLE_ENDIAN);
+            int shortCount = byteBuffer.remaining() / 2;
+            if (shortCount == 0) return;
 
-        short[] samples = new short[shortCount];
-        for (int i = 0; i < shortCount; i++) {
-            samples[i] = byteBuffer.getShort();
-        }
+            short[] samples = new short[shortCount];
+            for (int i = 0; i < shortCount; i++) {
+                samples[i] = byteBuffer.getShort();
+            }
 
-        buffer.append(samples);
+            buffer.append(samples);
 
-        // Periodically run recognition when we have sufficient rolling samples
-        if (buffer.shouldEvaluate()) {
-            short[] windowSamples = buffer.getRecentSamples();
-            PcmAudio queryAudio = new PcmAudio(windowSamples, SAMPLE_RATE);
+            // Periodically run recognition when we have sufficient rolling samples
+            if (buffer.shouldEvaluate()) {
+                short[] windowSamples = buffer.getRecentSamples();
+                PcmAudio queryAudio = new PcmAudio(windowSamples, SAMPLE_RATE);
 
-            MatchResult matchResult = matchingService.matchPcm(queryAudio);
+                MatchResult matchResult = matchingService.matchPcm(queryAudio);
 
-            Map<String, Object> response = new java.util.HashMap<>();
-            response.put("type", "MATCH_UPDATE");
-            response.put("matched", matchResult.matched());
-            response.put("song", matchResult.matched() ? matchResult.song() : null);
-            response.put("confidence", matchResult.confidence());
-            response.put("estimatedOffsetMs", matchResult.estimatedOffsetMs());
-            response.put("matchedFingerprints", matchResult.matchingHashes());
-            response.put("matchingHashes", matchResult.matchingHashes());
-            response.put("totalQueryFingerprints", matchResult.totalQueryFingerprints());
-            response.put("processingTimeMs", matchResult.searchDurationMs());
-            response.put("searchDurationMs", matchResult.searchDurationMs());
-            response.put("message", matchResult.message());
+                Map<String, Object> response = new java.util.LinkedHashMap<>();
+                response.put("type", "MATCH_UPDATE");
+                response.put("matched", matchResult.matched());
+                response.put("song", matchResult.matched() ? matchResult.song() : null);
+                response.put("confidence", matchResult.confidence());
+                response.put("estimatedOffsetMs", matchResult.estimatedOffsetMs());
+                response.put("matchedFingerprints", matchResult.matchingHashes());
+                response.put("matchingHashes", matchResult.matchingHashes());
+                response.put("totalQueryFingerprints", matchResult.totalQueryFingerprints());
+                response.put("processingTimeMs", matchResult.searchDurationMs());
+                response.put("searchDurationMs", matchResult.searchDurationMs());
+                response.put("receivedSamples", buffer.getTotalAppended());
+                response.put("windowSamples", windowSamples.length);
+                response.put("message", matchResult.message());
+                response.put("timestamp", java.time.Instant.now().toString());
 
-            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+            }
+        } catch (Exception e) {
+            log.error("Error processing binary audio frame for session {}: {}", session.getId(), e.getMessage(), e);
+            if (session.isOpen()) {
+                Map<String, Object> errorResponse = new java.util.LinkedHashMap<>();
+                errorResponse.put("type", "STREAM_ERROR");
+                errorResponse.put("error", "Audio processing failed");
+                errorResponse.put("message", e.getMessage() != null ? e.getMessage() : "Error evaluating acoustic match.");
+                errorResponse.put("timestamp", java.time.Instant.now().toString());
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(errorResponse)));
+            }
         }
     }
 
@@ -165,6 +196,10 @@ public class LiveAudioStreamWebSocketHandler extends AbstractWebSocketHandler {
             writeIndex = 0;
             totalAppended = 0;
             samplesSinceLastEval = 0;
+        }
+
+        public synchronized int getTotalAppended() {
+            return totalAppended;
         }
     }
 }
