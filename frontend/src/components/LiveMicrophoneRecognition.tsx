@@ -995,10 +995,17 @@ export const LiveMicrophoneRecognition: React.FC = () => {
 
                       <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1">
                         <div className="text-[10px] uppercase font-bold text-gray-400">Winning Candidate</div>
-                        <div className="font-mono font-semibold text-gray-900">
-                          {matcherDiagnostics.winningSongId != null ? `Song ID #${matcherDiagnostics.winningSongId}` : 'None'}
+                        <div className="font-mono font-semibold text-gray-900 truncate" title={matcherDiagnostics.winningSongTitle || undefined}>
+                          {matcherDiagnostics.winningSongTitle ? (
+                            <span>{matcherDiagnostics.winningSongTitle}</span>
+                          ) : matcherDiagnostics.winningSongId != null ? (
+                            `Song ID #${matcherDiagnostics.winningSongId}`
+                          ) : (
+                            'None'
+                          )}
                         </div>
-                        <div className="text-[10px] text-gray-500 font-mono">
+                        <div className="text-[10px] text-gray-500 font-mono truncate">
+                          {matcherDiagnostics.winningSongArtist ? `${matcherDiagnostics.winningSongArtist} • ` : ''}
                           Score: {matcherDiagnostics.winningScore.toFixed(1)} | Offset: {matcherDiagnostics.estimatedOffsetMs}ms
                         </div>
                       </div>
@@ -1009,7 +1016,12 @@ export const LiveMicrophoneRecognition: React.FC = () => {
                           CR: {(matcherDiagnostics.coherenceRatio * 100).toFixed(2)}%
                         </div>
                         <div className="text-[10px] text-gray-500 font-mono">
-                          Peak: {matcherDiagnostics.winningPeakVotes} / Total: {matcherDiagnostics.totalWinningVotes}
+                          Peak: {matcherDiagnostics.winningPeakVotes} / Distinct: {matcherDiagnostics.totalWinningVotes}
+                          {matcherDiagnostics.rawPairwiseVotes != null && (
+                            <span className="text-gray-400 block text-[9px]">
+                              Raw Pairwise: {matcherDiagnostics.rawPairwiseVotes}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1045,6 +1057,12 @@ export const LiveMicrophoneRecognition: React.FC = () => {
                         <p className="text-[11px] text-gray-600 leading-relaxed">
                           {matcherDiagnostics.rejectionReason}
                         </p>
+                        {matcherDiagnostics.rejectionGate !== 'NONE' && matcherDiagnostics.winningSongTitle && (
+                          <div className="text-[10px] text-amber-700 bg-amber-50 p-1.5 rounded border border-amber-200">
+                            <span className="font-semibold">Leading candidate:</span> {matcherDiagnostics.winningSongTitle}
+                            {matcherDiagnostics.winningSongArtist ? ` by ${matcherDiagnostics.winningSongArtist}` : ''}
+                          </div>
+                        )}
                       </div>
                     </div>
 
