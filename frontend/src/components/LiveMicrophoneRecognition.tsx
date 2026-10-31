@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, MicOff, Radio, Volume2, AlertCircle, RotateCcw, Activity, Wifi, Cpu, Play, Sliders, AlertTriangle } from 'lucide-react';
+import { Mic, MicOff, Radio, Volume2, AlertCircle, RotateCcw, Activity, Wifi, Cpu, Play, Sliders, AlertTriangle, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
 import { WaveformVisualizer } from './WaveformVisualizer';
 import { MatchResultCard } from './MatchResultCard';
-import type { MatchResponse } from '../types/api';
+import type { MatchResponse, MatchDiagnostics } from '../types/api';
 import { getWebSocketUrl } from '../services/apiClient';
 import { PolyphaseResampler, calculatePcmMetrics, type ResamplerMetrics } from '../utils/resampler';
 
@@ -247,6 +247,8 @@ export const LiveMicrophoneRecognition: React.FC = () => {
   const [interimMessage, setInterimMessage] = useState<string>('Listening to ambient audio...');
   const [sessionSummary, setSessionSummary] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<StreamDiagnostics>(INITIAL_DIAGNOSTICS);
+  const [matcherDiagnostics, setMatcherDiagnostics] = useState<MatchDiagnostics | null>(null);
+  const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState<boolean>(false);
 
   // Audio Device Selection
   const [availableDevices, setAvailableDevices] = useState<AudioDeviceOption[]>([]);
@@ -392,6 +394,7 @@ export const LiveMicrophoneRecognition: React.FC = () => {
     cleanupAudio();
     setErrorMessage(null);
     setLatestMatch(null);
+    setMatcherDiagnostics(null);
     setSessionSummary(null);
     setInterimMessage('Listening to ambient audio...');
     setStreamStatus('Initializing Pipeline...');
@@ -691,6 +694,10 @@ export const LiveMicrophoneRecognition: React.FC = () => {
           diagnosticsRef.current.evalLatencyMs = data.searchDurationMs ?? data.processingTimeMs ?? null;
           diagnosticsRef.current.receivedSamples = data.receivedSamples ?? 0;
 
+          if (data.diagnostics) {
+            setMatcherDiagnostics(data.diagnostics as MatchDiagnostics);
+          }
+
           if (data.matched && data.song) {
             const matchData: MatchResponse = {
               matched: true,
@@ -940,6 +947,149 @@ export const LiveMicrophoneRecognition: React.FC = () => {
                 {diagnostics.evalLatencyMs ? `${diagnostics.evalLatencyMs.toFixed(0)}ms latency` : 'Awaiting 2s window'}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Collapsible Developer Matching Diagnostics Panel */}
+        {(isListening || matcherDiagnostics) && (
+          <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-xs">
+            <button
+              onClick={() => setShowDiagnosticsPanel((prev) => !prev)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-xs font-semibold text-gray-700"
+            >
+              <div className="flex items-center gap-2">
+                <Terminal className="w-3.5 h-3.5 text-amber-600" />
+                <span>Developer Matching Diagnostics</span>
+                {matcherDiagnostics && (
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                    matcherDiagnostics.rejectionGate === 'NONE'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {matcherDiagnostics.rejectionGate === 'NONE' ? 'CONFIRMED' : matcherDiagnostics.rejectionGate}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 text-gray-500 text-[11px]">
+                <span>{showDiagnosticsPanel ? 'Hide Details' : 'Show Details'}</span>
+                {showDiagnosticsPanel ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </div>
+            </button>
+
+            {showDiagnosticsPanel && (
+              <div className="p-4 space-y-4 text-xs border-t border-gray-100 bg-gray-50/50">
+                {matcherDiagnostics ? (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1">
+                        <div className="text-[10px] uppercase font-bold text-gray-400">Query Features</div>
+                        <div className="font-mono font-semibold text-gray-900">{matcherDiagnostics.queryFingerprints} FPs</div>
+                        <div className="text-[10px] text-gray-500 font-mono">{matcherDiagnostics.distinctQueryHashes} distinct hashes</div>
+                      </div>
+
+                      <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1">
+                        <div className="text-[10px] uppercase font-bold text-gray-400">Database Hits</div>
+                        <div className="font-mono font-semibold text-gray-900">{matcherDiagnostics.candidateFingerprintRows} rows</div>
+                        <div className="text-[10px] text-gray-500 font-mono">{matcherDiagnostics.candidateSongs} candidate songs</div>
+                      </div>
+
+                      <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1">
+                        <div className="text-[10px] uppercase font-bold text-gray-400">Winning Candidate</div>
+                        <div className="font-mono font-semibold text-gray-900">
+                          {matcherDiagnostics.winningSongId != null ? `Song ID #${matcherDiagnostics.winningSongId}` : 'None'}
+                        </div>
+                        <div className="text-[10px] text-gray-500 font-mono">
+                          Score: {matcherDiagnostics.winningScore.toFixed(1)} | Offset: {matcherDiagnostics.estimatedOffsetMs}ms
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1">
+                        <div className="text-[10px] uppercase font-bold text-gray-400">Coherence Metrics</div>
+                        <div className="font-mono font-semibold text-gray-900">
+                          CR: {(matcherDiagnostics.coherenceRatio * 100).toFixed(2)}%
+                        </div>
+                        <div className="text-[10px] text-gray-500 font-mono">
+                          Peak: {matcherDiagnostics.winningPeakVotes} / Total: {matcherDiagnostics.totalWinningVotes}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1.5">
+                        <div className="text-[10px] uppercase font-bold text-gray-400">Ranking & Separation</div>
+                        <div className="flex justify-between text-[11px] font-mono">
+                          <span className="text-gray-500">Winner Score:</span>
+                          <span className="font-semibold text-gray-900">{matcherDiagnostics.winningScore.toFixed(1)}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] font-mono">
+                          <span className="text-gray-500">Runner-Up Score:</span>
+                          <span className="font-semibold text-gray-900">{matcherDiagnostics.runnerUpScore.toFixed(1)}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] font-mono">
+                          <span className="text-gray-500">Separation Margin:</span>
+                          <span className="font-semibold text-gray-900">{(matcherDiagnostics.margin * 100).toFixed(1)}%</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] font-mono">
+                          <span className="text-gray-500">Matcher Latency:</span>
+                          <span className="font-semibold text-gray-900">{matcherDiagnostics.searchDurationMs.toFixed(1)} ms</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1.5">
+                        <div className="text-[10px] uppercase font-bold text-gray-400">Rejection Decision</div>
+                        <div className="text-xs font-semibold text-gray-900 flex items-center gap-1.5">
+                          <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-800">
+                            {matcherDiagnostics.rejectionGate}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-600 leading-relaxed">
+                          {matcherDiagnostics.rejectionReason}
+                        </p>
+                      </div>
+                    </div>
+
+                    {matcherDiagnostics.topBuckets && matcherDiagnostics.topBuckets.length > 0 && (
+                      <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-2">
+                        <div className="text-[10px] uppercase font-bold text-gray-400">Top 15 Offset Histogram Buckets</div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-[11px] font-mono text-left">
+                            <thead className="bg-gray-50 text-gray-500 text-[10px]">
+                              <tr>
+                                <th className="py-1 px-2">Offset (ms)</th>
+                                <th className="py-1 px-2">Offset (sec)</th>
+                                <th className="py-1 px-2">Votes</th>
+                                <th className="py-1 px-2">Prominence</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {matcherDiagnostics.topBuckets.slice(0, 15).map((bucket, i) => (
+                                <tr key={i} className={i === 0 ? 'bg-amber-50/50 font-semibold text-amber-900' : 'text-gray-700'}>
+                                  <td className="py-1 px-2">{bucket.offsetMs} ms</td>
+                                  <td className="py-1 px-2">{(bucket.offsetMs / 1000).toFixed(2)} s</td>
+                                  <td className="py-1 px-2">{bucket.votes}</td>
+                                  <td className="py-1 px-2">
+                                    <div className="w-24 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                                      <div
+                                        className={`h-full ${i === 0 ? 'bg-amber-500' : 'bg-gray-400'}`}
+                                        style={{ width: `${Math.min(100, (bucket.votes / Math.max(1, matcherDiagnostics.winningPeakVotes)) * 100)}%` }}
+                                      />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-gray-500 text-center py-2 italic font-mono text-[11px]">
+                    Waiting for initial audio evaluation window...
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 

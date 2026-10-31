@@ -17,6 +17,25 @@ export interface MatchScoreDetails {
   histogram: Record<string, number>;
 }
 
+export interface MatchDiagnostics {
+  queryFingerprints: number;
+  distinctQueryHashes: number;
+  candidateFingerprintRows: number;
+  candidateSongs: number;
+  winningSongId?: number | null;
+  winningScore: number;
+  winningPeakVotes: number;
+  totalWinningVotes: number;
+  coherenceRatio: number;
+  runnerUpScore: number;
+  margin: number;
+  estimatedOffsetMs: number;
+  rejectionGate: string;
+  rejectionReason: string;
+  searchDurationMs: number;
+  topBuckets: { offsetMs: number; votes: number }[];
+}
+
 export interface MatchResponse {
   matched: boolean;
   song?: Song | null;
@@ -28,6 +47,7 @@ export interface MatchResponse {
   processingTimeMs?: number;
   searchDurationMs?: number;
   diagnostics?: MatchScoreDetails;
+  matcherDiagnostics?: MatchDiagnostics;
   offsetHistogram?: { offsetMs: number; votes: number }[];
   message?: string;
 }

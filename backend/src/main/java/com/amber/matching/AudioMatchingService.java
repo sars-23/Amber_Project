@@ -80,7 +80,12 @@ public class AudioMatchingService {
             double duration = (System.nanoTime() - startTime) / 1_000_000.0;
             recordSearchMetrics(duration);
             int count = queryFingerprints == null ? 0 : queryFingerprints.size();
-            return MatchResult.noMatch(count, duration, "Insufficient audio features detected in query excerpt.");
+            MatchDiagnostics diag = new MatchDiagnostics(
+                    count, 0, 0, 0, null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    "INSUFFICIENT_FEATURES", "Insufficient audio features detected in query excerpt.",
+                    Math.round(duration * 10.0) / 10.0, Collections.emptyList()
+            );
+            return MatchResult.noMatch(count, duration, "Insufficient audio features detected in query excerpt.", diag);
         }
 
         // 1. Group query anchor timestamps by hash
@@ -95,7 +100,13 @@ public class AudioMatchingService {
         if (candidates.isEmpty()) {
             double duration = (System.nanoTime() - startTime) / 1_000_000.0;
             recordSearchMetrics(duration);
-            return MatchResult.noMatch(queryFingerprints.size(), duration, "No matching audio fingerprints found in the catalogue.");
+            MatchDiagnostics diag = new MatchDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), 0, 0,
+                    null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    "NO_CANDIDATES", "No matching audio fingerprints found in the catalogue.",
+                    Math.round(duration * 10.0) / 10.0, Collections.emptyList()
+            );
+            return MatchResult.noMatch(queryFingerprints.size(), duration, "No matching audio fingerprints found in the catalogue.", diag);
         }
 
         // 3. Accumulate offset histogram votes per candidate song
@@ -122,7 +133,13 @@ public class AudioMatchingService {
         recordSearchMetrics(durationMs);
 
         if (ranked.isEmpty()) {
-            return MatchResult.noMatch(queryFingerprints.size(), durationMs, "No candidate songs matched the query audio.");
+            MatchDiagnostics diag = new MatchDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), 0,
+                    null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    "NO_CANDIDATE_SONGS", "No candidate songs matched the query audio.",
+                    Math.round(durationMs * 10.0) / 10.0, Collections.emptyList()
+            );
+            return MatchResult.noMatch(queryFingerprints.size(), durationMs, "No candidate songs matched the query audio.", diag);
         }
 
         OffsetHistogram winner = ranked.get(0);
@@ -161,10 +178,15 @@ public class AudioMatchingService {
         if (winnerPeakVotes < MIN_PEAK_VOTES_THRESHOLD) {
             log.warn("Match rejected: candidate songId={} peakVotes={} below threshold {}",
                     winner.getSongId(), winnerPeakVotes, MIN_PEAK_VOTES_THRESHOLD);
+            MatchDiagnostics diag = buildDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), histograms.size(),
+                    winner, secondScore, margin, "GATE_1_PEAK_VOTES",
+                    "Insufficient time-coherent votes in peak offset bucket.", durationMs
+            );
             return MatchResult.noMatchWithDiagnostics(
                     queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
                     totalWinnerVotes, winner.getTopBuckets(15),
-                    "Insufficient time-coherent votes in peak offset bucket."
+                    "Insufficient time-coherent votes in peak offset bucket.", diag
             );
         }
 
@@ -172,10 +194,15 @@ public class AudioMatchingService {
         if (winnerScore < MIN_SCORE_THRESHOLD) {
             log.warn("Match rejected: candidate songId={} score={:.2f} below threshold {:.2f}",
                     winner.getSongId(), winnerScore, MIN_SCORE_THRESHOLD);
+            MatchDiagnostics diag = buildDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), histograms.size(),
+                    winner, secondScore, margin, "GATE_2_SCORE",
+                    "Offset-histogram coherence score below recognition threshold.", durationMs
+            );
             return MatchResult.noMatchWithDiagnostics(
                     queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
                     totalWinnerVotes, winner.getTopBuckets(15),
-                    "Offset-histogram coherence score below recognition threshold."
+                    "Offset-histogram coherence score below recognition threshold.", diag
             );
         }
 
@@ -183,10 +210,15 @@ public class AudioMatchingService {
         if (coherenceRatio < MIN_COHERENCE_RATIO_THRESHOLD) {
             log.warn("Match rejected: candidate songId={} coherenceRatio={:.4f} below threshold {:.2f} (scattered noise)",
                     winner.getSongId(), coherenceRatio, MIN_COHERENCE_RATIO_THRESHOLD);
+            MatchDiagnostics diag = buildDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), histograms.size(),
+                    winner, secondScore, margin, "GATE_3_COHERENCE_RATIO",
+                    "Offset histogram scatter indicates random background hash collisions.", durationMs
+            );
             return MatchResult.noMatchWithDiagnostics(
                     queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
                     totalWinnerVotes, winner.getTopBuckets(15),
-                    "Offset histogram scatter indicates random background hash collisions."
+                    "Offset histogram scatter indicates random background hash collisions.", diag
             );
         }
 
@@ -194,10 +226,15 @@ public class AudioMatchingService {
         if (ranked.size() > 1 && secondScore >= 2.0 && margin < MIN_AMBIGUITY_MARGIN_THRESHOLD) {
             log.warn("Match rejected: ambiguous candidates song1={} (score={:.2f}) vs song2={} (score={:.2f}), margin={:.3f}",
                     winner.getSongId(), winnerScore, ranked.get(1).getSongId(), secondScore, margin);
+            MatchDiagnostics diag = buildDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), histograms.size(),
+                    winner, secondScore, margin, "GATE_4_AMBIGUITY",
+                    "Ambiguous match: Multiple candidate songs exhibited comparable acoustic correlation.", durationMs
+            );
             return MatchResult.noMatchWithDiagnostics(
                     queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
                     totalWinnerVotes, winner.getTopBuckets(15),
-                    "Ambiguous match: Multiple candidate songs exhibited comparable acoustic correlation."
+                    "Ambiguous match: Multiple candidate songs exhibited comparable acoustic correlation.", diag
             );
         }
 
@@ -205,10 +242,15 @@ public class AudioMatchingService {
         if (confidence < MIN_CONFIDENCE_THRESHOLD) {
             log.warn("Match rejected: candidate songId={} confidence={:.2f} below threshold {:.2f}",
                     winner.getSongId(), confidence, MIN_CONFIDENCE_THRESHOLD);
+            String reason = String.format("Candidate acoustic confidence (%.1f%%) is below acceptance threshold.", roundedConfidence * 100.0);
+            MatchDiagnostics diag = buildDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), histograms.size(),
+                    winner, secondScore, margin, "GATE_5_CONFIDENCE", reason, durationMs
+            );
             return MatchResult.noMatchWithDiagnostics(
                     queryFingerprints.size(), durationMs, roundedScore, roundedConfidence,
                     totalWinnerVotes, winner.getTopBuckets(15),
-                    String.format("Candidate acoustic confidence (%.1f%%) is below acceptance threshold.", roundedConfidence * 100.0)
+                    reason, diag
             );
         }
 
@@ -216,7 +258,12 @@ public class AudioMatchingService {
         Optional<Song> songOpt = songRepository.findById(winner.getSongId());
         if (songOpt.isEmpty()) {
             log.warn("Match rejected: candidate songId={} not found in database", winner.getSongId());
-            return MatchResult.noMatch(queryFingerprints.size(), durationMs, "Winning candidate metadata was not found in the catalogue.");
+            MatchDiagnostics diag = buildDiagnostics(
+                    queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), histograms.size(),
+                    winner, secondScore, margin, "GATE_6_CATALOGUE_NOT_FOUND",
+                    "Winning candidate metadata was not found in the catalogue.", durationMs
+            );
+            return MatchResult.noMatch(queryFingerprints.size(), durationMs, "Winning candidate metadata was not found in the catalogue.", diag);
         }
 
         Song song = songOpt.get();
@@ -224,6 +271,11 @@ public class AudioMatchingService {
 
         log.info("MATCH IDENTIFIED: '{}' by '{}' at offset {}ms (votes={}, score={:.2f}, conf={:.2f}, margin={:.2f}) in {:.2f}ms",
                 song.title(), song.artist(), estimatedOffsetMs, winnerPeakVotes, winnerScore, roundedConfidence, margin, durationMs);
+
+        MatchDiagnostics diag = buildDiagnostics(
+                queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), histograms.size(),
+                winner, secondScore, margin, "NONE", "Acoustic match confirmed with high confidence.", durationMs
+        );
 
         return new MatchResult(
                 true,
@@ -235,7 +287,44 @@ public class AudioMatchingService {
                 queryFingerprints.size(),
                 Math.round(durationMs * 10.0) / 10.0,
                 winner.getTopBuckets(15),
-                "Acoustic match confirmed with high confidence."
+                "Acoustic match confirmed with high confidence.",
+                diag
+        );
+    }
+
+    private MatchDiagnostics buildDiagnostics(
+            int queryFPs, int distinctHashes, int candidateRows, int candidateSongs,
+            OffsetHistogram winner, double secondScore, double margin,
+            String rejectionGate, String rejectionReason, double durationMs
+    ) {
+        if (winner == null) {
+            return new MatchDiagnostics(
+                    queryFPs, distinctHashes, candidateRows, candidateSongs,
+                    null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    rejectionGate, rejectionReason, Math.round(durationMs * 10.0) / 10.0,
+                    Collections.emptyList()
+            );
+        }
+        int peakVotes = winner.getPeakVotes();
+        int totalVotes = winner.getTotalMatches();
+        double coherenceRatio = totalVotes > 0 ? (double) peakVotes / totalVotes : 0.0;
+        return new MatchDiagnostics(
+                queryFPs,
+                distinctHashes,
+                candidateRows,
+                candidateSongs,
+                winner.getSongId(),
+                Math.round(winner.calculateScore() * 10.0) / 10.0,
+                peakVotes,
+                totalVotes,
+                Math.round(coherenceRatio * 10000.0) / 10000.0,
+                Math.round(secondScore * 10.0) / 10.0,
+                Math.round(margin * 1000.0) / 1000.0,
+                Math.max(0, winner.getPeakOffsetMs()),
+                rejectionGate,
+                rejectionReason,
+                Math.round(durationMs * 10.0) / 10.0,
+                winner.getTopBuckets(15)
         );
     }
 
