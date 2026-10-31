@@ -1,43 +1,44 @@
-# Amber: Production Deployment Guide
+# Amber: Production Deployment & Operations Guide
 
-This guide details the complete production architecture, deployment configuration, and verification procedures for the live Amber application.
+This guide details the complete production deployment architecture, infrastructure configuration, environment variables, and verification procedures for the live Amber application.
 
 ---
 
 ## 1. Production Architecture Overview
 
-Amber is deployed as a distributed web application across cloud providers:
+Amber is deployed as a cloud-native distributed application:
 
-- **Frontend Application**: [Render Static Site](https://amber-frontend-w78m.onrender.com) (React 19 / TypeScript 6 / Vite 5 / Tailwind CSS 3.4).
-- **Backend Service**: [Render Web Service](https://amber-backend-ler4.onrender.com) (Docker container running Eclipse Temurin Java 21 LTS, Spring Boot 3.3, and Alpine FFmpeg).
-- **Database Engine**: [Neon Serverless PostgreSQL](https://neon.tech) (PostgreSQL 16 with SSL encryption and versioned Flyway migrations).
-- **Repository & CI**: GitHub (`sars-23/Amber_Project` on branch `main`), with automated build and test quality gates via GitHub Actions.
+- **Frontend Static Site**: [Render Static Site](https://amber-frontend-w78m.onrender.com) (`amber-frontend-w78m`).
+- **Backend Web Service**: [Render Web Service](https://amber-backend-ler4.onrender.com) (`amber-backend-ler4`), running Dockerized Java 21 LTS with Spring Boot 3.3.4 and Alpine FFmpeg.
+- **Database Engine**: [Neon Serverless PostgreSQL](https://neon.tech) (PostgreSQL 16 with SSL encryption, HikariCP pooling, and Flyway versioned migrations).
+- **Continuous Integration**: GitHub Actions (`sars-23/Amber_Project` on branch `main`).
 
-```
-                      +---------------------------------------+
-                      |       Client Browser / Microphone      |
-                      +---------------------------------------+
-                                   |                 |
-                   HTTPS (Assets)  |                 |  WSS / HTTPS (API)
-                                   v                 v
-                 +----------------------+   +-----------------------+
-                 |  Render Static Site  |   |   Render Web Service  |
-                 |   (amber-frontend)   |   |    (amber-backend)    |
-                 +----------------------+   +-----------------------+
-                                                        |
-                                                        | JDBC over TLS (Port 5432)
-                                                        v
-                                            +-----------------------+
-                                            |    Neon PostgreSQL    |
-                                            |  (B-Tree Hash Index)  |
-                                            +-----------------------+
+```mermaid
+flowchart TD
+    Client["User Browser / Physical Microphone\n(Web Audio API & AudioWorklet)"]
+
+    subgraph Edge["Render Cloud Edge (Oregon Region)"]
+        FrontendSite["amber-frontend (Static Site)\nhttps://amber-frontend-w78m.onrender.com"]
+        BackendService["amber-backend (Web Service Container)\nhttps://amber-backend-ler4.onrender.com"]
+    end
+
+    subgraph Database["Neon Serverless PostgreSQL (PostgreSQL 16)"]
+        NeonDB[("Primary Database\n(35 Tracks, 3.32M Fingerprints)")]
+        BTreeIndex["Composite B-Tree Index\nidx_fingerprints_hash_song"]
+    end
+
+    Client -->|HTTPS (Static Assets)| FrontendSite
+    Client -->|HTTPS REST API| BackendService
+    Client -->|WSS Binary PCM Frames| BackendService
+    BackendService -->|TLS Encrypted JDBC (Port 5432)| NeonDB
+    NeonDB --- BTreeIndex
 ```
 
 ---
 
 ## 2. Infrastructure as Code (`render.yaml`)
 
-Both backend and frontend services are defined declaratively in the root [render.yaml](../render.yaml):
+Both backend and frontend services are declared in the repository's root [`render.yaml`](../render.yaml):
 
 ```yaml
 services:
@@ -83,68 +84,62 @@ services:
 
 ---
 
-## 3. Environment Variables & Secret Provisioning
+## 3. Environment Variables Reference
 
-Sensitive credentials (`sync: false`) are configured privately in the **Render Dashboard** and are never committed to git:
+Environment variables marked `sync: false` represent sensitive credentials configured strictly within the **Render Dashboard**. They are never committed to version control.
 
-| Variable Name | Service | Purpose | Security Rule |
-| :--- | :--- | :--- | :--- |
-| `SPRING_DATASOURCE_URL` | `amber-backend` | Neon PostgreSQL pooled JDBC URL (`jdbc:postgresql://<host>/<db>?sslmode=require`) | Set in Render Dashboard (`sync: false`). Never commit passwords. |
-| `SPRING_DATASOURCE_USERNAME` | `amber-backend` | Database user account | Set in Render Dashboard (`sync: false`). |
-| `SPRING_DATASOURCE_PASSWORD` | `amber-backend` | Database user password | Set in Render Dashboard (`sync: false`). |
-| `AMBER_ADMIN_API_KEY` | `amber-backend` | Secret token authorizing `POST /api/v1/songs` and `DELETE /api/v1/songs/{id}` | Set in Render Dashboard (`sync: false`). Backend fails closed if missing. Never expose in frontend bundles. |
-| `CORS_ALLOWED_ORIGINS` | `amber-backend` | Allowed browser origins for CORS preflight | Defined in `render.yaml`. Includes `https://*.onrender.com`, `https://*.vercel.app` (retained in deployed configuration), and localhost. |
-| `VITE_API_BASE_URL` | `amber-frontend` | Base HTTP endpoint for REST communication | `https://amber-backend-ler4.onrender.com/api/v1` |
-| `VITE_WS_URL` | `amber-frontend` | WebSocket endpoint for real-time microphone stream | `wss://amber-backend-ler4.onrender.com/api/v1/ws/audio-stream` |
-
----
-
-## 4. Verification & Health Monitoring
-
-### 4.1 Automated Health Probe
-The backend exposes a lightweight health endpoint polled by Render's container watchdog:
-- **URL**: `GET https://amber-backend-ler4.onrender.com/api/v1/health`
-- **Expected Status**: `200 OK`
-- **Payload Schema**:
-  ```json
-  {
-    "status": "UP",
-    "version": "1.0.0",
-    "database": "CONNECTED",
-    "sampleRate": 11025,
-    "fftSize": 1024,
-    "hopSize": 512
-  }
-  ```
-
-### 4.2 Security Health Probe
-Verify that catalog write endpoints enforce authentication:
-```bash
-# Must return HTTP 401 Unauthorized
-curl -i -X DELETE https://amber-backend-ler4.onrender.com/api/v1/songs/999999
-```
-
-### 4.3 WebSocket Streaming Probe
-Verify that the WebSocket accepts binary audio frames:
-```bash
-# Connects to wss://amber-backend-ler4.onrender.com/api/v1/ws/audio-stream
-# Accepts 16-bit 11,025 Hz little-endian mono PCM frames
-```
+| Environment Variable | Target Service | Classification | Purpose & Configuration |
+|---|---|---|---|
+| `SPRING_DATASOURCE_URL` | `amber-backend` | Secret (`sync: false`) | Pooled JDBC URL to Neon PostgreSQL with SSL enforced (`jdbc:postgresql://<host>/<database>?sslmode=require`). |
+| `SPRING_DATASOURCE_USERNAME` | `amber-backend` | Secret (`sync: false`) | Neon database user account. |
+| `SPRING_DATASOURCE_PASSWORD` | `amber-backend` | Secret (`sync: false`) | Neon database user password. |
+| `AMBER_ADMIN_API_KEY` | `amber-backend` | Secret (`sync: false`) | Master administrative secret authorizing catalogue indexing and deletions. Fails closed if missing. |
+| `JAMENDO_CLIENT_ID` | `amber-backend` | Secret (`sync: false`) | Optional Jamendo developer client ID for Open Music exploration. |
+| `CORS_ALLOWED_ORIGINS` | `amber-backend` | Configuration | Comma-delimited origins permitted for browser CORS preflights. |
+| `JAVA_OPTS` | `amber-backend` | Runtime Flag | Container memory management: `-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0`. |
+| `PORT` | `amber-backend` | Runtime Flag | HTTP listening port assigned by Render container harness (defaults to `10000`). |
+| `VITE_API_BASE_URL` | `amber-frontend` | Build Configuration | Public base HTTP endpoint: `https://amber-backend-ler4.onrender.com/api/v1`. |
+| `VITE_WS_URL` | `amber-frontend` | Build Configuration | Public WebSocket stream endpoint: `wss://amber-backend-ler4.onrender.com/api/v1/ws/audio-stream`. |
 
 ---
 
-## 5. Operational Gotchas & Troubleshooting
+## 4. Database Connectivity & Migration Strategy
 
-1. **Render Free-Tier Spin-Down (Cold Starts)**:
-   - When inactive for 15 minutes, Render spins down the backend container.
-   - The initial request wakes the instance and boots the JVM + Flyway migrations, which takes 30–50 seconds.
-   - The frontend displays an ambient connecting status during cold starts.
-2. **Microphone Permissions (HTTPS Requirement)**:
-   - Modern browsers block `navigator.mediaDevices.getUserMedia` and `AudioWorklet` on unencrypted HTTP connections.
-   - Render serves all frontend and backend traffic over TLS (`https://` and `wss://`), satisfying browser security policies.
-3. **Reverse Proxy & Client IP Extraction**:
-   - Render operates as a reverse proxy in front of the container, appending the connecting client's verified IP to the end of `X-Forwarded-For`.
-   - `ClientRateLimiter` parses the rightmost token to prevent header-spoofing attacks against the benchmark rate limits.
-4. **Administrative Operations**:
-   - Catalogue writes (`POST /api/v1/songs` and `DELETE /api/v1/songs/{id}`) require the `X-Amber-Admin-Key` header matching `AMBER_ADMIN_API_KEY`.
-   - The frontend does not persist this secret in browser storage; administrators provide it on-demand within the ingestion modal or deletion confirmation prompt.
+### 4.1 Neon Serverless PostgreSQL
+Amber connects to PostgreSQL 16 on Neon using HikariCP connection pooling:
+- **Maximum Pool Size**: 10 connections (tailored to serverless connection limits).
+- **Minimum Idle Connections**: 2.
+- **Connection Timeout**: 20,000 ms.
+- **Idle Timeout**: 30,000 ms.
+- **Max Lifetime**: 1,800,000 ms (30 minutes).
+
+### 4.2 Flyway Schema Versioning
+Database schema lifecycle is managed automatically on backend startup via Flyway:
+- `V1__init_schema.sql`: Initializes `songs` and `fingerprints` tables, composite B-Tree index on `(hash, song_id)`.
+- `V2__open_music_importer.sql`: Creates `open_music_import_jobs` and `open_music_import_items` tables with indices on `(status, next_attempt_at)`.
+- `V3__open_music_hardening.sql`: Adds durable lease fields (`locked_by`, `lease_until`, `last_error_code`) and deduplication indices on `(source_provider, source_track_id)`.
+
+---
+
+## 5. Health Checks, Monitoring & Operational Constraints
+
+### 5.1 Health Probe
+Render probes `GET /api/v1/health` periodically:
+```bash
+curl -s https://amber-backend-ler4.onrender.com/api/v1/health
+```
+```json
+{
+  "status": "UP",
+  "version": "1.0.0",
+  "database": "CONNECTED",
+  "sampleRate": 11025,
+  "fftSize": 1024,
+  "hopSize": 512
+}
+```
+
+### 5.2 Free-Tier Sleep Cycle & Cold Starts
+- **Idle Timeout**: Render spins down free web service containers after 15 minutes of zero inbound HTTP traffic.
+- **Cold Boot Duration**: First request after container suspension takes $\approx 30–50\text{ seconds}$ to initialize the JVM, load Flyway schema validations, and establish database pools.
+- **Client Handling**: The frontend displays a non-blocking connection banner if health checks take $>5\text{ seconds}$.
