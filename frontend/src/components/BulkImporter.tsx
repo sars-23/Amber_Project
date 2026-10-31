@@ -254,6 +254,9 @@ export const BulkImporter: React.FC<BulkImporterProps> = ({
                 fingerprintCount: response.fingerprintCount,
                 durationMs: response.durationMs,
                 errorDetails: null,
+                isDuplicate: false,
+                duplicateType: undefined,
+                duplicateInfo: undefined,
               }
             : i
         )
