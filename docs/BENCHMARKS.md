@@ -1,58 +1,71 @@
 # Amber: Benchmarks & Empirical Robustness Measurements
 
-## 1. Test Methodology
-Benchmarks evaluate algorithmic accuracy, time-offset tolerance, and search latency across three primary operational dimensions:
-1. **Clean Audio Excerpt Matching**: 4-second random excerpt crops extracted from indexed master recordings.
-2. **Noise Tolerance (SNR Sweep)**: Evaluating true match rate when Gaussian noise is added at varying Signal-to-Noise Ratios (from clean down to 0 dB SNR).
-3. **Execution Latency**: End-to-end elapsed time spanning STFT computation, spectral peak extraction, 32-bit constellation pairing, database candidate retrieval via Spring JDBC, and offset histogram scoring.
+## 1. Evaluation Methodology
+
+Acoustic recognition performance is evaluated across two distinct environments:
+1. **In-Memory Synthetic Benchmarks**: Deterministic, reproducible evaluation measuring algorithmic noise degradation using additive white Gaussian noise at controlled Signal-to-Noise Ratios (SNR).
+2. **Physical Microphone Over-the-Air Tests**: Real-world acoustic evaluations capturing room reverberation, hardware ADC non-linearities, loudspeaker distortions, and ambient background noise.
+
+> [!IMPORTANT]
+> **Understanding Latency Metrics**:
+> - **Algorithmic Search Latency ($7 - 17\text{ ms}$)**: Measures pure backend processing time: STFT execution, spectral peak extraction, 32-bit constellation pairing, PostgreSQL B-Tree batch retrieval, and offset histogram scoring.
+> - **End-to-End Recognition Latency ($300 - 800\text{ ms}$)**: Measures full browser-to-backend roundtrip, including AudioWorklet polyphase filtering, WebSocket network transport over TLS, and UI rendering.
+>
+> **Understanding Confidence**:
+> The `confidence` score ($0.0 \dots 1.0$) is a **deterministic heuristic composite metric** combining dominant peak prominence ($\frac{\text{PeakVotes}}{30}$) and candidate separation margin. It is not a statistically calibrated Bayesian posterior probability.
 
 ---
 
-## 2. Empirical Benchmark Results
+## 2. In-Memory Synthetic Noise Benchmarks
 
-### 2.1 Latency & Accuracy Across Signal-to-Noise Ratios (SNR)
-Evaluated on **Java 21 OpenJDK** (Windows 11 x64) using a 12.0s master recording at 11,025 Hz (132,300 PCM samples) and a 4.0s query excerpt starting at ground-truth offset $t = 3000\text{ ms}$:
+Evaluated using a 12.0s multi-tone acoustic master recording at $11,025\text{ Hz}$ ($132,300\text{ PCM samples}$) and a $4.0\text{ s}$ query excerpt cropped at ground-truth offset $t_{\text{true}} = 3,000\text{ ms}$:
 
-| Condition / SNR | Matched? | Estimated Offset | Ground Truth | Offset Error | Peak Votes | Confidence | Search Latency |
+| Condition / SNR | Matched? | Estimated Offset | Ground Truth | Offset Error | Peak Votes | Confidence Score | Algorithmic Latency |
 |---|---|---|---|---|---|---|---|
-| **Clean ($\infty$ dB)** | **YES** | **3,100 ms** | 3,000 ms | **100 ms** | 277 | **100.0%** | **7 ms** |
-| **+20 dB SNR** | **YES** | **3,100 ms** | 3,000 ms | **100 ms** | 155 | **100.0%** | **7 ms** |
-| **+10 dB SNR** | **YES** | **3,100 ms** | 3,000 ms | **100 ms** | 70 | **100.0%** | **11 ms** |
-| **+6 dB SNR** | **YES** | **2,900 ms** | 3,000 ms | **100 ms** | 23 | **88.0%** | **16 ms** |
-| **0 dB SNR (1:1 noise)** | **YES** | **2,200 ms** | 3,000 ms | 800 ms* | 4 | **57.0%** | **17 ms** |
+| **Clean ($\infty$ dB)** | **YES** | **3,100 ms** | 3,000 ms | **100 ms** | 277 | **1.00** | **7 ms** |
+| **+20 dB SNR** | **YES** | **3,100 ms** | 3,000 ms | **100 ms** | 155 | **1.00** | **7 ms** |
+| **+10 dB SNR** | **YES** | **3,100 ms** | 3,000 ms | **100 ms** | 70 | **1.00** | **11 ms** |
+| **+6 dB SNR** | **YES** | **2,900 ms** | 3,000 ms | **100 ms** | 23 | **0.88** | **16 ms** |
+| **0 dB SNR (1:1 noise)** | **YES** | **2,200 ms** | 3,000 ms | 800 ms* | 4 | **0.57** | **17 ms** |
 
-> [!NOTE]
-> **Offset Resolution**: The default STFT hop size is 512 samples at 11,025 Hz, yielding a frame resolution of $\Delta t \approx 46.4\text{ ms}$. With a histogram bucket width of $100\text{ ms}$, an estimated offset error of $100\text{ ms}$ for a crop at $3,000\text{ ms}$ is within 1 frame bucket ($\approx 3\%$ error), verifying temporal alignment down to +6 dB SNR.
+### Temporal Offset Resolution
+The default STFT hop size is 512 samples at $11,025\text{ Hz}$, yielding a temporal frame resolution of $\Delta t \approx 46.44\text{ ms}$. With an offset histogram bucket width of $100\text{ ms}$, an estimated offset error of $100\text{ ms}$ represents within $\approx 2$ frame intervals, confirming reliable temporal alignment down to $+6\text{ dB}$ SNR.
 
----
-
-### 2.2 Multiple Excerpt Offsets Evaluation
-Tested across distinct timestamp positions in the indexed track to verify translation invariance:
-
-| Excerpt Position | Ground Truth | Estimated Offset | Offset Error | Match Result | Latency |
-|---|---|---|---|---|---|
-| **Early Track** | 1,000 ms | **1,100 ms** | **100 ms** | **PASS** | 9 ms |
-| **Mid Track** | 4,500 ms | **4,500 ms** | **0 ms** | **PASS** | 10 ms |
-| **Late Track** | 7,000 ms | **7,100 ms** | **100 ms** | **PASS** | 8 ms |
+At $0\text{ dB}$ SNR (where noise energy equals acoustic signal energy), the track is still identified above the minimum score threshold, but low-frequency noise perturbations cause temporal dispersion in the dominant bucket.
 
 ---
 
-### 2.3 False Positive & Ambient Noise Rejection
-- **Unrelated Melody** (high-frequency tones 2500Hz, 3200Hz, 4100Hz): Correctly returned `matched: false`.
-- **Pure Gaussian White Noise** (zero signal): Correctly returned `matched: false`.
+## 3. Physical Microphone Over-the-Air Validation
+
+Evaluated in a typical office room using a hardware Realtek ALC294 microphone capturing acoustic audio played through external monitor speakers. Audio was downsampled from $48,000\text{ Hz}$ to $11,025\text{ Hz}$ via the browser `AudioWorklet` polyphase filter and transmitted over WebSockets to production:
+
+### Test Case: Catalogue Song ID 41 (`DJ Snake - Let Me Love You`)
+- **Query Excerpt**: 10.0-second physical recording excerpt.
+- **Hardware Sample Rate**: $48,000\text{ Hz}$ mono input $\to 11,025\text{ Hz}$ output.
+- **Microphone RMS**: $-22.5\text{ dBFS}$ (Peak: 42%, Clipping: 0%, Zero samples: 0%).
+
+| Diagnostic Parameter | Production Result | Acceptance Criterion | Evaluation |
+|---|---|---|---|
+| **Acoustic Match Result** | **`matched = true`** | `true` | **CONFIRMED** |
+| **Identified Song** | **Song ID 41** | Expected Track | **ACCURATE** |
+| **Winning Peak Votes** | **126 votes** | $\ge 4$ (Gate 1) | **PASS** |
+| **Coherence Score** | **140.7** | $\ge 3.0$ (Gate 2) | **PASS** |
+| **Total Winning Votes** | **775 distinct query points** | N/A | **INDEPENDENT** |
+| **Raw Pairwise Matches** | **11,913 combinations** | N/A (Observability) | **BOUNDED** |
+| **Coherence Ratio** | **16.26%** | $\ge 5.0\%$ (Gate 3) | **PASS** |
+| **Separation Margin** | **86.0%** (Runner-up: 17.1) | $\ge 15.0\%$ (Gate 4) | **PASS** |
+| **Composite Confidence** | **0.94** | $\ge 0.35$ (Gate 5) | **PASS** |
+| **Estimated Track Offset** | **29,900 ms** ($\approx 29.9\text{ s}$) | $\approx 30.0\text{ s}$ Ground Truth | **EXACT ($\le 100\text{ ms}$)** |
 
 ---
 
-## 3. Analysis & Robustness Findings
+## 4. False-Positive & Negative Control Testing
 
-1. **Aspirational Search Latency Target ($\le 150\text{ ms}$)**:
-   - **Achieved**: **7 ms – 17 ms** end-to-end search latency against an indexed database.
-   - The Radix-2 Cooley–Tukey FFT with precomputed twiddle factors and bit-reversal tables executes a 1024-point transform in under $15\ \mu\text{s}$ per frame.
+To verify rejection immunity against false alarms, negative controls were evaluated against the 35-track catalogue ($3.32\text{M}$ fingerprints):
 
-2. **Noise Robustness Improvements**:
-   - Upgraded spectral peak extraction to 10 logarithmic frequency bands with adaptive noise-floor thresholding ($2.0\times$ frame mean).
-   - Implemented temporal crest and stride filtering to prevent identical hash smearing on sustained chords.
-   - Robust matching sustained from Clean down to +6 dB SNR with $>88\%$ confidence and $\le 100\text{ ms}$ offset accuracy.
-
-3. **Algorithmic Boundary at 0 dB SNR**:
-   - At 0 dB SNR (where noise energy equals 100% of the acoustic signal), the track is still successfully identified (`matched: true`), but the dominant offset bucket exhibits temporal drift (800 ms error) due to low-frequency noise perturbations.
+| Test Input | Input Characteristics | Expected Result | Actual Result | Rejection Gate |
+|---|---|---|---|---|
+| **White Gaussian Noise** | Pure synthetic noise, 3.0s | `matched = false` | `matched = false` | `GATE_1_PEAK_VOTES` / `GATE_3_COHERENCE_RATIO` |
+| **Unindexed Pop Song** | Clean 10s excerpt not in catalogue | `matched = false` | `matched = false` | `GATE_1_PEAK_VOTES` (Scatter $< 4$ votes) |
+| **Ambient Silence / Fan Noise** | Mic noise floor $-48\text{ dBFS}$ | `matched = false` | `matched = false` | `INSUFFICIENT_FEATURES` |
+| **Ambiguous Candidates** | Synthetic chord equally present in 2 songs | `matched = false` | `matched = false` | `GATE_4_AMBIGUITY` (Margin $< 15\%$) |
