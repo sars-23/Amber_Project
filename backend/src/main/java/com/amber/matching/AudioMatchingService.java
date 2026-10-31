@@ -81,45 +81,46 @@ public class AudioMatchingService {
             recordSearchMetrics(duration);
             int count = queryFingerprints == null ? 0 : queryFingerprints.size();
             MatchDiagnostics diag = new MatchDiagnostics(
-                    count, 0, 0, 0, null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    count, 0, 0, 0, null, null, null, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0,
                     "INSUFFICIENT_FEATURES", "Insufficient audio features detected in query excerpt.",
                     Math.round(duration * 10.0) / 10.0, Collections.emptyList()
             );
             return MatchResult.noMatch(count, duration, "Insufficient audio features detected in query excerpt.", diag);
         }
 
-        // 1. Group query anchor timestamps by hash
-        Map<Integer, List<Integer>> queryTimesByHash = new HashMap<>();
+        // 1. Group query anchor timestamps by hash (deduplicate identical timestamps for the same hash)
+        Map<Integer, Set<Integer>> queryTimesByHash = new HashMap<>();
         for (Fingerprint fp : queryFingerprints) {
-            queryTimesByHash.computeIfAbsent(fp.hash(), k -> new ArrayList<>(2)).add(fp.anchorTimeMs());
+            queryTimesByHash.computeIfAbsent(fp.hash(), k -> new LinkedHashSet<>(2)).add(fp.anchorTimeMs());
         }
 
-        // 2. Fetch candidate fingerprints from database
-        List<IndexedFingerprint> candidates = fingerprintRepository.findCandidatesByHashes(queryTimesByHash.keySet());
+        // 2. Fetch candidate fingerprints from database and deduplicate exact duplicate rows
+        List<IndexedFingerprint> rawCandidates = fingerprintRepository.findCandidatesByHashes(queryTimesByHash.keySet());
+        Set<IndexedFingerprint> candidates = new LinkedHashSet<>(rawCandidates);
 
         if (candidates.isEmpty()) {
             double duration = (System.nanoTime() - startTime) / 1_000_000.0;
             recordSearchMetrics(duration);
             MatchDiagnostics diag = new MatchDiagnostics(
                     queryFingerprints.size(), queryTimesByHash.size(), 0, 0,
-                    null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    null, null, null, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0,
                     "NO_CANDIDATES", "No matching audio fingerprints found in the catalogue.",
                     Math.round(duration * 10.0) / 10.0, Collections.emptyList()
             );
             return MatchResult.noMatch(queryFingerprints.size(), duration, "No matching audio fingerprints found in the catalogue.", diag);
         }
 
-        // 3. Accumulate offset histogram votes per candidate song
+        // 3. Accumulate offset histogram votes per candidate song using independent query coordinates
         Map<Long, OffsetHistogram> histograms = new HashMap<>();
         for (IndexedFingerprint candidate : candidates) {
-            List<Integer> queryTimes = queryTimesByHash.get(candidate.hash());
+            Set<Integer> queryTimes = queryTimesByHash.get(candidate.hash());
             if (queryTimes != null) {
                 OffsetHistogram histogram = histograms.computeIfAbsent(
                         candidate.songId(),
                         id -> new OffsetHistogram(id)
                 );
                 for (int qTime : queryTimes) {
-                    histogram.addVote(candidate.anchorTimeMs() - qTime);
+                    histogram.addMatch(candidate.anchorTimeMs() - qTime, candidate.hash(), qTime);
                 }
             }
         }
@@ -135,7 +136,7 @@ public class AudioMatchingService {
         if (ranked.isEmpty()) {
             MatchDiagnostics diag = new MatchDiagnostics(
                     queryFingerprints.size(), queryTimesByHash.size(), candidates.size(), 0,
-                    null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    null, null, null, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0,
                     "NO_CANDIDATE_SONGS", "No candidate songs matched the query audio.",
                     Math.round(durationMs * 10.0) / 10.0, Collections.emptyList()
             );
@@ -300,23 +301,40 @@ public class AudioMatchingService {
         if (winner == null) {
             return new MatchDiagnostics(
                     queryFPs, distinctHashes, candidateRows, candidateSongs,
-                    null, 0.0, 0, 0, 0.0, 0.0, 0.0, 0,
+                    null, null, null, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0,
                     rejectionGate, rejectionReason, Math.round(durationMs * 10.0) / 10.0,
                     Collections.emptyList()
             );
         }
         int peakVotes = winner.getPeakVotes();
         int totalVotes = winner.getTotalMatches();
+        int rawPairwiseVotes = winner.getRawPairwiseMatches();
         double coherenceRatio = totalVotes > 0 ? (double) peakVotes / totalVotes : 0.0;
+
+        String winnerTitle = null;
+        String winnerArtist = null;
+        try {
+            Optional<Song> songOpt = songRepository.findById(winner.getSongId());
+            if (songOpt.isPresent()) {
+                winnerTitle = songOpt.get().title();
+                winnerArtist = songOpt.get().artist();
+            }
+        } catch (Exception e) {
+            log.debug("Could not resolve winner metadata for diagnostics: {}", e.getMessage());
+        }
+
         return new MatchDiagnostics(
                 queryFPs,
                 distinctHashes,
                 candidateRows,
                 candidateSongs,
                 winner.getSongId(),
+                winnerTitle,
+                winnerArtist,
                 Math.round(winner.calculateScore() * 10.0) / 10.0,
                 peakVotes,
                 totalVotes,
+                rawPairwiseVotes,
                 Math.round(coherenceRatio * 10000.0) / 10000.0,
                 Math.round(secondScore * 10.0) / 10.0,
                 Math.round(margin * 1000.0) / 1000.0,

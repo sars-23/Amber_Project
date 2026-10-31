@@ -23,9 +23,12 @@ export interface MatchDiagnostics {
   candidateFingerprintRows: number;
   candidateSongs: number;
   winningSongId?: number | null;
+  winningSongTitle?: string | null;
+  winningSongArtist?: string | null;
   winningScore: number;
   winningPeakVotes: number;
   totalWinningVotes: number;
+  rawPairwiseVotes?: number;
   coherenceRatio: number;
   runnerUpScore: number;
   margin: number;
