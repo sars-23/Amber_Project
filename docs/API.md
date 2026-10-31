@@ -136,15 +136,17 @@ Identifies an unknown audio file or recording excerpt against the indexed databa
       "title": "DJ_Snake_-_Let_Me_Love_You_(Official_Music_Video)_ft._Justin_Bieber",
       "artist": "Unknown Artist",
       "durationMs": 205322,
-      "fingerprintCount": 91269
+      "fingerprintCount": 91269,
+      "createdAt": "2026-10-31T13:28:42.450248Z"
     },
     "estimatedOffsetMs": 29900,
     "score": 140.7,
     "confidence": 0.94,
-    "matchedFingerprints": 775,
     "matchingHashes": 775,
+    "matchedFingerprints": 775,
     "totalQueryFingerprints": 1352,
     "searchDurationMs": 28.5,
+    "processingTimeMs": 28.5,
     "message": "Acoustic match confirmed with high confidence.",
     "offsetHistogram": [
       {"offsetMs": 29900, "votes": 126},
@@ -177,6 +179,10 @@ Identifies an unknown audio file or recording excerpt against the indexed databa
   }
   ```
 
+> [!NOTE]
+> **Production Search Timing Metric**:
+> `searchDurationMs` (and backwards-compatible property `processingTimeMs`) measures the duration of `AudioMatchingService.matchFingerprints()` in milliseconds. The timer begins **after** query audio decoding and STFT fingerprint generation have finished. It measures candidate retrieval from PostgreSQL, independent query coordinate accumulation, candidate ranking, and acceptance gate evaluations. It does not measure browser-to-server network transport or container FFmpeg decoding.
+
 - **Response 200 OK (Match Rejected with Safe Diagnostics)**:
   ```json
   {
@@ -185,10 +191,11 @@ Identifies an unknown audio file or recording excerpt against the indexed databa
     "estimatedOffsetMs": 0,
     "score": 2.1,
     "confidence": 0.12,
-    "matchedFingerprints": 14,
     "matchingHashes": 14,
+    "matchedFingerprints": 14,
     "totalQueryFingerprints": 480,
     "searchDurationMs": 18.2,
+    "processingTimeMs": 18.2,
     "message": "Insufficient time-coherent votes in peak offset bucket.",
     "offsetHistogram": [
       {"offsetMs": 14200, "votes": 2}
@@ -239,23 +246,29 @@ Executes an isolated, in-memory acoustic degradation benchmark without reading f
   {
     "matched": true,
     "referenceTitle": "Benchmark Symphony (Built-in 12s Reference)",
-    "effectiveSnrDb": 20.0,
+    "snrDb": 20.0,
     "targetOffsetMs": 2000,
     "estimatedOffsetMs": 1900,
     "offsetErrorMs": 100,
-    "score": 170.1,
+    "score": 155.0,
     "confidence": 1.0,
-    "matchedFingerprints": 209,
+    "matchingHashes": 155,
+    "matchedFingerprints": 155,
     "totalQueryFingerprints": 410,
     "totalReferenceFingerprints": 1167,
-    "executionTimeMs": 133.8,
-    "topOffsetBuckets": [
-      {"offsetMs": 1900, "votes": 170},
+    "searchDurationMs": 133.8,
+    "processingTimeMs": 133.8,
+    "offsetHistogram": [
+      {"offsetMs": 1900, "votes": 155},
       {"offsetMs": 1800, "votes": 25}
     ],
-    "explanation": "Acoustic constellation survived +20.0 dB SNR with 170 peak votes and 100 ms offset error."
+    "explanation": "Acoustic constellation survived +20.0 dB SNR with 155 peak votes and 100 ms offset error."
   }
   ```
+
+> [!NOTE]
+> **Noise Lab In-Memory Benchmark Timing**:
+> `RobustnessBenchmarkService` starts its timer before in-memory processing begins. Its `searchDurationMs` (and `processingTimeMs`) encompasses the entire in-memory test bench execution: reference audio decoding or melody synthesis, clean excerpt slicing, deterministic Gaussian noise generation (`Random(1337)`), query STFT fingerprint generation, and local hash-map pairwise offset matching. It performs zero database operations and zero network calls.
 
 ---
 
