@@ -79,7 +79,7 @@ This script provides a structured, 3 to 5-minute technical demonstration of Ambe
   - Show `Coherence Ratio: 10%–18%` (comfortably above the $5.0\%$ gate).
 
 **Technical Callout**:
-> *"Inside the browser, our custom AudioWorklet runs a 128-phase Kaiser-windowed polyphase resampler to decimate hardware 48 kHz audio down to 11,025 Hz signed 16-bit PCM. The browser streams 4 KB binary frames over a TLS WebSocket. The backend maintains a rolling 4-second circular buffer, generating candidate evaluations every 500 milliseconds without allocating memory on every frame."*
+> *"Inside the browser, our custom AudioWorklet runs a 128-phase Blackman-windowed sinc polyphase resampler (4,800 Hz cutoff) to decimate hardware 48 kHz audio down to 11,025 Hz signed 16-bit PCM. The browser streams 4 KB binary frames over a TLS WebSocket. The backend maintains a rolling 4-second circular buffer, generating candidate evaluations every 500 milliseconds without allocating memory on every frame."*
 
 ---
 
@@ -107,7 +107,7 @@ This script provides a structured, 3 to 5-minute technical demonstration of Ambe
 
 **Visual Action**:
 1. Click the **Library** tab.
-2. View the paginated list of indexed songs (showing 35 tracks, duration, and fingerprint counts).
+2. View the paginated list of indexed songs (displaying 35 tracks and ~3.32M fingerprints as of snapshot dated 2026-10-31; live catalogue metrics accessible at `/api/v1/stats`).
 3. Click the **Bulk Importer** tab. Show how filenames are automatically parsed into metadata, validated against limits, and checked for duplicates.
 4. Click the **Open Music** tab. Show the Jamendo search interface.
 
@@ -123,9 +123,9 @@ This script provides a structured, 3 to 5-minute technical demonstration of Ambe
 **Visual Action**:
 1. Click the **Noise Lab** tab.
 2. Set the Signal-to-Noise Ratio (SNR) slider to `+20 dB`, then click **Run Robustness Benchmark**.
-3. Point out the resulting metrics: `Offset Error: 100 ms`, `Confidence: 1.0`, `170 Peak Votes`.
+3. Observe the live benchmark metrics returned by the server (typically `Offset Error: 100 ms`, `Confidence: 1.0`, and prominent peak votes around 150–160 depending on synthesis jitter).
 4. Lower the slider to `+6 dB` (high noise environment) and re-run.
-5. Point out that the engine still achieves `100 ms` offset accuracy and $>80\%$ confidence.
+5. Point out that the engine still achieves `100 ms` offset accuracy and high confidence ($>80\%$) despite severe synthetic corruption.
 
 **Technical Callout**:
 > *"Noise Lab runs entirely in-memory without database queries. It synthesizes additive white Gaussian noise at exact decibel ratios:

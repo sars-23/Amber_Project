@@ -137,7 +137,7 @@ sequenceDiagram
 
     User->>Context: Acoustic Audio Input
     Context->>Worklet: Float32Array frames (48 kHz)
-    Note over Worklet: 20 Hz DC Blocker +<br/>128-Phase Kaiser Sinc Polyphase Filter (48k -> 11,025 Hz)
+    Note over Worklet: 20 Hz DC Blocker +<br/>128-Phase Blackman Sinc Polyphase Filter (48k -> 11,025 Hz)
     Worklet->>Client: postMessage({ pcm: Int16Array })
     Client->>Handler: WSS Binary Frame (4096 bytes PCM)
     Handler->>Buffer: write(pcmBytes)
@@ -183,6 +183,6 @@ sequenceDiagram
 
 ### 3.6 Frontend Architecture (`frontend/src`)
 - **React 19 & TypeScript 6**: Strict type-safe UI built with Vite 5 and Tailwind CSS 3.4.
-- **Real-Time Audio Capture**: Web Audio API with native `AudioWorklet` processor executing a 128-phase Kaiser-windowed polyphase resampler, supported by an automatic `ScriptProcessor` fallback.
+- **Real-Time Audio Capture**: Web Audio API with native `AudioWorklet` processor executing a 128-phase Blackman-windowed sinc polyphase resampler (4,800 Hz cutoff), supported by an automatic `ScriptProcessor` fallback.
 - **HTML5 Canvas Oscilloscope**: Time-domain waveform visualizer and live dBFS level meter.
 - **Developer Diagnostics Panel**: Collapsible observability view exposing query fingerprint counts, database candidate rows, winning candidate score, coherence ratio, separation margin, and top 15 histogram buckets.

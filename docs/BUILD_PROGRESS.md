@@ -47,7 +47,7 @@
   - Transactional row locking (`FOR UPDATE`), durable lease management, auto-recovery (170 tests passing).
   - Explicit Jamendo licensing usage notice and operational governance gates.
 - [x] **Phase 11 — Polyphase Resampling & Live Streaming Diagnostics**
-  - 128-phase Kaiser-windowed polyphase resampler in `AudioWorklet` with `ScriptProcessor` fallback.
+  - 128-phase Blackman-windowed sinc polyphase resampler (4,800 Hz cutoff) in `AudioWorklet` with `ScriptProcessor` fallback.
   - 20 Hz DC blocker, RMS level monitoring, input device selection.
   - Developer diagnostics panel exposing candidate scores, gates, and top 15 histogram buckets.
 - [x] **Phase 12 — Independent Query Support & Vote Multiplication Resolution**

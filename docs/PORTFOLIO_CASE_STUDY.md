@@ -63,11 +63,11 @@ Amber is architected as a **modular monolith** with clean bounded contexts:
 
 ### 5.1 Real-Time Browser Audio Capture & Resampling
 Browser audio interfaces natively run at $44,100\text{ Hz}$ or $48,000\text{ Hz}$. Naive downsampling using linear interpolation or zero-order hold introduces severe high-frequency aliasing and harmonic smearing into the $0 - 5.5\text{ kHz}$ band.
-- **Solution**: Engineered a 128-phase Kaiser-windowed polyphase FIR decimation filter directly in the `AudioWorklet` thread (`pcm-worker.js`). The filter provides $>50\text{ dB}$ stopband attenuation above $5,750\text{ Hz}$ and incorporates a $20\text{ Hz}$ DC blocking IIR filter to eliminate hardware ADC offsets.
+- **Solution**: Engineered a 128-phase Blackman-windowed sinc polyphase FIR decimation filter with a 4,800 Hz cutoff directly in the `AudioWorklet` thread (`pcm-worker.js`). Stopband verification unit tests confirm $>50\text{ dB}$ attenuation across all 128 phases at discrete test frequencies (5,750, 6,000, 8,000, 12,000, and 16,000 Hz) for 44.1 kHz and 48 kHz inputs, and the pipeline incorporates a $20\text{ Hz}$ DC blocking IIR filter to eliminate hardware ADC offsets.
 
 ### 5.2 FFT Execution Speed Without Native Libraries
 Computing thousands of discrete Fourier transforms per second during continuous live streaming could easily overwhelm the JVM without careful memory management.
-- **Solution**: Implemented an in-place decimation-in-time Radix-2 Cooley–Tukey FFT. Reused real and imaginary work arrays across frames, precomputed bit-reversal permutation tables, and stored trigonometric twiddle factors in static lookup arrays. A 1,024-point FFT executes in under $15\ \mu\text{s}$ per frame.
+- **Solution**: Implemented an in-place decimation-in-time Radix-2 Cooley–Tukey FFT. Reused real and imaginary work arrays across frames, precomputed bit-reversal permutation tables, and stored trigonometric twiddle factors in static lookup arrays. This eliminates per-frame heap allocations and costly trigonometric evaluations, achieving high-throughput microsecond-level transform times directly in pure Java without native C bindings or external mathematical libraries.
 
 ---
 
@@ -78,12 +78,13 @@ During live testing with dense reference tracks (e.g., full songs with $>90,000$
 ```
 GATE_3_COHERENCE_RATIO: Offset histogram scatter indicates random background hash collisions.
 ```
-In an excerpt test of catalogue track 41 (`DJ Snake - Let Me Love You`), the candidate exhibited:
-- **Peak Votes**: 126 aligned votes in bucket $\Delta t = 29,900\text{ ms}$.
+In an excerpt test of catalogue track 41 (`DJ Snake - Let Me Love You`) generating 1,352 total query fingerprints, candidate track 41 exhibited:
+- **Candidate Distinct Query Support**: 775 distinct query points matched across the track.
+- **Peak-Bucket Support**: 126 distinct query points aligned at offset $\Delta t = 29,900\text{ ms}$ (bounded by candidate distinct query support of 775 and query total of 1,352, not query frames).
 - **Candidate Score**: 122.3 (dominant signal-to-noise separation).
 - **Separation Margin**: 86.0% over runner-up.
-- **Total Votes**: **11,913 votes**.
-- **Coherence Ratio**: $\frac{126}{11,913} = 1.06\%$ ($< 5.0\%$ gate threshold).
+- **Raw Pairwise Combinations**: **11,913 votes** ($N_q \times N_{db}$ cartesian pairings).
+- **Flawed Coherence Ratio**: $\frac{126}{11,913} = 1.06\%$ ($< 5.0\%$ gate threshold).
 
 **Root Cause**: In songs with repetitive musical motifs (repeated bass lines, drums, or choruses), hash $H$ appeared $N_q$ times in the query and $N_{db}$ times across the full 3.5-minute song. The matching loop nested over both lists:
 ```java
@@ -94,7 +95,7 @@ for (IndexedFingerprint candidate : candidates) {
     }
 }
 ```
-This Cartesian multiplication inflated the candidate's total matches into tens of thousands, while the true peak could never exceed the query length ($N_{\text{peak}} \le N_{\text{query}}$). The coherence ratio was artificially suppressed, causing genuine matches to be falsely rejected as background scatter.
+This Cartesian multiplication inflated the candidate's total matches into tens of thousands (11,913 raw pairings), while the true peak could never exceed the candidate's distinct query support ($N_{\text{peak}} \le N_{\text{candidate\_support}} \le N_{\text{query}}$). The coherence ratio was artificially suppressed, causing genuine matches to be falsely rejected as background scatter.
 
 ### The Architectural Resolution
 Implemented **independent query evidence counting**:
@@ -105,9 +106,9 @@ Implemented **independent query evidence counting**:
    $$\text{CoherenceRatio} = \frac{|\text{Peak Bucket QueryPoints}|}{|\text{Candidate Unique QueryPoints}|}$$
 5. Raw pairwise combinations ($N_q \times N_{db} = 11,913$) are retained strictly as a diagnostic counter (`rawPairwiseVotes`).
 
-**Result**: For the exact same recording, distinct query support measured **775**, yielding a true coherence ratio of:
+**Result**: For the exact same recording, distinct candidate query support measured **775** (from 1,352 total query fingerprints), yielding a true coherence ratio of:
 $$\text{CoherenceRatio} = \frac{126}{775} = 16.26\% \ge 5.0\%$$
-The candidate passed all acceptance gates immediately with **94% confidence**, completely resolving false rejections without relaxing any false-positive security thresholds.
+The candidate passed all acceptance gates immediately with **94% confidence** (via the composite confidence heuristic), completely resolving false rejections without relaxing any false-positive security thresholds.
 
 ---
 
@@ -142,7 +143,7 @@ Amber enforces automated quality gates in GitHub Actions CI with zero external t
 
 ## 9. Current Limitations & Production Constraints
 
-- **Curated Demonstration Scale**: The live production catalogue hosted on Neon PostgreSQL contains a curated demonstration set (35 songs, $\approx 3.32\text{M}$ fingerprints) designed to operate within serverless storage quotas, rather than a commercial multi-million-track database.
+- **Curated Demonstration Scale**: The live production catalogue hosted on Neon PostgreSQL contains a curated demonstration set (35 songs, 3,325,966 fingerprints as of snapshot dated 2026-10-31; live statistics accessible at `/api/v1/stats`) designed to operate within serverless storage quotas, rather than a commercial multi-million-track database.
 - **Closed-World Domain**: Recognition identifies recordings represented in the catalogue. Unindexed music is correctly rejected by the false-positive gates.
 - **Free-Tier Cold Starts**: Render's free tier idles container services after 15 minutes of inactivity; initial boot takes $\approx 30–50\text{ seconds}$ to initialize the JVM and HikariCP connection pool.
 - **Jamendo Usage Boundary**: Creative Commons eligibility and download availability do not establish permission for bulk operational retention of derived fingerprints under Jamendo's platform terms; bulk ingestion remains disabled operationally.
@@ -155,21 +156,21 @@ Amber enforces automated quality gates in GitHub Actions CI with zero external t
 > *Architected an acoustic music recognition platform in Java 21, Spring Boot, React, and PostgreSQL, implementing custom Radix-2 Cooley–Tukey FFT, constellation hashing, and independent query-support offset histograms to achieve sub-second identification under severe noise.*
 
 ### B. Three Detailed Technical Resume Bullets
-- **High-Performance Signal Processing**: Engineered a pure Java digital signal processing pipeline (Radix-2 Cooley–Tukey FFT, periodic Hann windowing, and 10-band logarithmic peak extraction) executing 1,024-point transforms in $<15\ \mu\text{s}$ with zero external math dependencies.
-- **Algorithmic Invariant & Combinatorial Hashing**: Designed a 32-bit forward-constellation hashing scheme and relational B-Tree inverted index in PostgreSQL, resolving a critical vote multiplication defect via independent query coordinates to achieve $7–17\text{ ms}$ algorithmic search latency.
-- **Real-Time Full-Stack Streaming**: Built a continuous live microphone streaming pipeline utilizing a 128-phase Kaiser-windowed polyphase resampler in Web Audio `AudioWorklet`, streaming 11,025 Hz PCM frames over WebSockets to a Spring Boot circular session buffer with multi-factor false-positive rejection.
+- **High-Performance Signal Processing**: Engineered a pure Java digital signal processing pipeline (Radix-2 Cooley–Tukey FFT, periodic Hann windowing, and 10-band logarithmic peak extraction) executing in-place 1,024-point transforms with zero per-frame allocation and zero external math dependencies.
+- **Algorithmic Invariant & Combinatorial Hashing**: Designed a 32-bit forward-constellation hashing scheme and relational B-Tree inverted index in PostgreSQL, resolving a critical vote multiplication defect via independent query coordinates to achieve $7–17\text{ ms}$ in-memory algorithmic search latency.
+- **Real-Time Full-Stack Streaming**: Built a continuous live microphone streaming pipeline utilizing a 128-phase Blackman-windowed sinc polyphase resampler in Web Audio `AudioWorklet`, streaming 11,025 Hz PCM frames over WebSockets to a Spring Boot circular session buffer with multi-factor false-positive rejection.
 
 ---
 
 ### C. 30-Second Elevator Pitch
-> *"I built Amber, a real-time acoustic music recognition platform from first principles in Java 21 and React. Instead of relying on third-party APIs or Python packages, I implemented the complete DSP stack—including a Radix-2 Cooley–Tukey FFT, STFT framing, logarithmic spectral peak extraction, 32-bit constellation hashing, and offset histogram matching against PostgreSQL. It supports drag-and-drop audio search and live microphone streaming via an AudioWorklet polyphase resampler over WebSockets, identifying songs in under 30 milliseconds while enforcing 5 strict acceptance gates to eliminate false positives."*
+> *"I built Amber, a real-time acoustic music recognition platform from first principles in Java 21 and React. Instead of relying on third-party APIs or Python packages, I implemented the complete DSP stack—including a Radix-2 Cooley–Tukey FFT, STFT framing, logarithmic spectral peak extraction, 32-bit constellation hashing, and offset histogram matching against PostgreSQL. It supports drag-and-drop audio search and live microphone streaming via an AudioWorklet polyphase resampler over WebSockets, identifying songs with sub-second database turnaround while enforcing 5 strict acceptance gates to eliminate false positives."*
 
 ---
 
 ### D. Two-Minute Technical Deep Dive
 > *"Amber is an acoustic fingerprinting engine designed to solve the music identification problem without external math libraries.
 >
-> When an audio excerpt is captured—either via file upload or through a browser microphone—it is normalized to 11,025 Hz mono 16-bit PCM. In the browser, we accomplish this inside an AudioWorklet using a 128-phase Kaiser-windowed polyphase filter that decimates 48 kHz hardware audio with over 50 dB stopband attenuation.
+> When an audio excerpt is captured—either via file upload or through a browser microphone—it is normalized to 11,025 Hz mono 16-bit PCM. In the browser, we accomplish this inside an AudioWorklet using a 128-phase Blackman-windowed sinc polyphase filter (4,800 Hz cutoff) that decimates 48 kHz hardware audio with over 50 dB stopband attenuation.
 >
 > On the backend, we compute a Short-Time Fourier Transform using 1,024-sample frames with 50% overlap and a periodic Hann window. We pass this through our in-place Radix-2 Cooley–Tukey FFT, utilizing precomputed twiddle factors and bit-reversal tables.
 >
@@ -179,7 +180,7 @@ Amber enforces automated quality gates in GitHub Actions CI with zero external t
 >
 > One major engineering hurdle was resolving a Cartesian vote multiplication bug where repeated musical riffs multiplied votes to over 10,000, suppressing the coherence ratio below our 5% gate. We solved this by implementing independent query coordinates, ensuring each query point supports a bucket and candidate at most once.
 >
-> The engine evaluates 5 multi-factor acceptance gates—peak votes, coherence score, coherence ratio, ambiguity margin, and composite confidence—achieving 7 to 17 millisecond search latency and robust identification down to +6 dB SNR."*
+> The engine evaluates 5 multi-factor acceptance gates—peak votes, coherence score, coherence ratio, ambiguity margin, and composite confidence—achieving robust identification down to +6 dB SNR."*
 
 ---
 
@@ -226,11 +227,11 @@ Amber enforces automated quality gates in GitHub Actions CI with zero external t
 **Answer**:
 > *"The vote multiplication defect occurs when a candidate song has repeated musical structures (such as a recurring bass riff, kick drum, or chorus). If hash $H$ appears $N_q$ times in the query and $N_{db}$ times in the database song, a naive nested loop accumulates $N_q \times N_{db}$ votes for that candidate.
 >
-> In our production tests on songs with $>90,000$ fingerprints, this Cartesian product inflated total candidate votes to 11,913, even though the query only contained 1,352 total fingerprints. Because the true physical peak can never exceed the number of query frames ($N_{\text{peak}} \le N_{\text{query}} = 126$), calculating coherence ratio as $\frac{\text{Peak}}{\text{Total}}$ yielded $\frac{126}{11,913} = 1.06\%$, failing the 5% coherence gate and falsely rejecting genuine songs.
+> In our production tests on songs with $>90,000$ fingerprints, this Cartesian product inflated total candidate votes to 11,913, even though the query only contained 1,352 total fingerprints. Because the true peak bucket support can never exceed the candidate's distinct query support ($N_{\text{peak}} \le N_{\text{candidate\_support}} \le N_{\text{query}}$)—measuring 126 distinct query features for the winning bucket—calculating coherence ratio as $\frac{\text{Peak}}{\text{Total Pairwise}}$ yielded $\frac{126}{11,913} = 1.06\%$, failing the 5% coherence gate and falsely rejecting genuine songs. Note that 126 is the peak bucket's distinct query support, not the count of query frames.
 >
 > We solved this by implementing independent query coordinates:
 > - Each query occurrence is tracked as a distinct coordinate: $\text{QueryPoint} = (\text{hash}, t_q)$.
 > - Inside `OffsetHistogram`, each bucket stores a `Set<QueryPoint>`: a single query feature can support an offset bucket at most once.
 > - The candidate maintains a global `Set<QueryPoint>`: a single query feature can contribute at most once to the candidate's total distinct query support.
 >
-> This bounds the denominator to the actual number of query features that matched the candidate (e.g. 775 instead of 11,913). The coherence ratio measured $\frac{126}{775} = 16.26\%$, passing the 5% gate and identifying the song with 94% confidence."*
+> This bounds the denominator to the actual number of distinct query features that matched the candidate (775 distinct query support out of 1,352 query fingerprints, rather than 11,913 raw pairings). The coherence ratio measured $\frac{126}{775} = 16.26\%$, passing the 5% gate and identifying the song with 94% confidence under our multi-factor scoring heuristic."*
