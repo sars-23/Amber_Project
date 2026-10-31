@@ -1,5 +1,6 @@
 package com.amber.api.dto;
 
+import com.amber.matching.MatchDiagnostics;
 import com.amber.matching.MatchResult;
 import com.amber.matching.OffsetHistogram;
 
@@ -17,10 +18,11 @@ public record MatchResponse(
         int totalQueryFingerprints,
         @JsonProperty("searchDurationMs") double searchDurationMs,
         List<OffsetHistogram.HistogramBucket> offsetHistogram,
-        String message
+        String message,
+        @JsonProperty("diagnostics") MatchDiagnostics diagnostics
 ) {
     /**
-     * Backwards-compatible constructor for existing tests and call sites without message.
+     * Backwards-compatible constructor for existing tests and call sites without message or diagnostics.
      */
     public MatchResponse(
             boolean matched,
@@ -33,7 +35,25 @@ public record MatchResponse(
             double searchDurationMs,
             List<OffsetHistogram.HistogramBucket> offsetHistogram
     ) {
-        this(matched, song, estimatedOffsetMs, score, confidence, matchingHashes, totalQueryFingerprints, searchDurationMs, offsetHistogram, null);
+        this(matched, song, estimatedOffsetMs, score, confidence, matchingHashes, totalQueryFingerprints, searchDurationMs, offsetHistogram, null, null);
+    }
+
+    /**
+     * Backwards-compatible constructor for existing tests and call sites without diagnostics.
+     */
+    public MatchResponse(
+            boolean matched,
+            SongResponse song,
+            int estimatedOffsetMs,
+            double score,
+            double confidence,
+            int matchingHashes,
+            int totalQueryFingerprints,
+            double searchDurationMs,
+            List<OffsetHistogram.HistogramBucket> offsetHistogram,
+            String message
+    ) {
+        this(matched, song, estimatedOffsetMs, score, confidence, matchingHashes, totalQueryFingerprints, searchDurationMs, offsetHistogram, message, null);
     }
 
     @JsonProperty("matchedFingerprints")
@@ -57,7 +77,8 @@ public record MatchResponse(
                 result.totalQueryFingerprints(),
                 result.searchDurationMs(),
                 result.offsetHistogram(),
-                result.message()
+                result.message(),
+                result.diagnostics()
         );
     }
 }

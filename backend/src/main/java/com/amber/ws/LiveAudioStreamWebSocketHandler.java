@@ -110,6 +110,7 @@ public class LiveAudioStreamWebSocketHandler extends AbstractWebSocketHandler {
                 response.put("windowSamples", windowSamples.length);
                 response.put("message", matchResult.message());
                 response.put("timestamp", java.time.Instant.now().toString());
+                response.put("diagnostics", matchResult.diagnostics());
 
                 session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
             }
