@@ -45,15 +45,15 @@ This script provides a structured, 3 to 5-minute technical demonstration of Ambe
 3. Click **Identify Audio**.
 
 **Expected Result**:
-- The match card appears within $500\text{ ms}$ displaying:
+- The match card renders the identification results:
   - Title: `DJ_Snake_-_Let_Me_Love_You_(Official_Music_Video)_ft._Justin_Bieber`
-  - Confidence: `94%`
+  - Confidence: `94%` (or score heuristic returned for the excerpt)
   - Estimated Offset: `29.9s`
-  - Algorithmic Search Latency: `~25–35 ms`
+  - Algorithmic Search Latency: (Show the actual latency reported by the running application)
 - The **Offset Histogram** chart renders a dominant vertical spike at $29,900\text{ ms}$, with flat noise scatter across other buckets.
 
 **Technical Callout**:
-> *"Notice the latency: pure algorithmic lookup in the B-Tree index took under 30 milliseconds. The offset histogram visualizes the core algorithmic invariant: when identical constellation hashes align at a constant time delta between query and database ($t_{db} - t_q \approx \text{constant}$), votes cluster into a single dominant bucket while random background collisions disperse uniformly."*
+> *"Notice the latency reported directly by the running application in the match card: algorithmic lookup in the B-Tree index and offset histogram evaluation execute dynamically based on candidate volume. The offset histogram visualizes the core algorithmic invariant: when identical constellation hashes align at a constant time delta between query and database ($t_{db} - t_q \approx \text{constant}$), votes cluster into a single dominant bucket while random background collisions disperse uniformly."*
 
 ---
 
@@ -123,7 +123,7 @@ This script provides a structured, 3 to 5-minute technical demonstration of Ambe
 **Visual Action**:
 1. Click the **Noise Lab** tab.
 2. Set the Signal-to-Noise Ratio (SNR) slider to `+20 dB`, then click **Run Robustness Benchmark**.
-3. Observe the live benchmark metrics returned by the server (typically `Offset Error: 100 ms`, `Confidence: 1.0`, and prominent peak votes around 150–160 depending on synthesis jitter).
+3. Observe the deterministic benchmark metrics returned by the server: because `RobustnessBenchmarkService` uses a fixed random seed (`1337`), synthesized noise is fully reproducible (`Offset Error: 100 ms`, `Confidence: 1.0`, and `155 Peak Votes` for the default 12-second reference at $+20\text{ dB}$ SNR).
 4. Lower the slider to `+6 dB` (high noise environment) and re-run.
 5. Point out that the engine still achieves `100 ms` offset accuracy and high confidence ($>80\%$) despite severe synthetic corruption.
 
