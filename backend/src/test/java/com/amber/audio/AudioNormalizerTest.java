@@ -54,6 +54,20 @@ class AudioNormalizerTest {
     }
 
     @Test
+    @DisplayName("Should resample 48000Hz WAV to 11025Hz via FFmpeg")
+    void testResample48kTo11k() throws IOException {
+        short[] original = SyntheticAudioGenerator.generateSineSamples(440, 2.0, 48000, 0.8);
+        byte[] wavBytes = SyntheticAudioGenerator.createWavFile(original, 48000);
+
+        PcmAudio pcm = audioNormalizer.normalize(wavBytes, "test_48k.wav");
+
+        assertThat(pcm).isNotNull();
+        assertThat(pcm.getSampleRate()).isEqualTo(11025);
+        // 2.0 seconds at 11025 Hz = 22050 samples
+        assertThat(pcm.getDurationSeconds()).isCloseTo(2.0, org.assertj.core.data.Offset.offset(0.05));
+    }
+
+    @Test
     @DisplayName("Should throw AudioProcessingException on invalid non-audio file bytes")
     void testMalformedAudio() {
         byte[] garbage = new byte[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
